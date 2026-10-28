@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
-import { TextInput, HelperText, Snackbar, Button } from 'react-native-paper';
+import { TextInput, HelperText, Button } from 'react-native-paper';
 import { useForm, Controller } from 'react-hook-form';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation } from '@tanstack/react-query';
@@ -9,8 +9,9 @@ import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
-import apiClient from '../../api/client';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
+import { userApi } from '../../api/services/userApi';
 import { ChangePasswordDTO } from '../../types';
 
 export const ChangePasswordScreen: React.FC = () => {
@@ -21,9 +22,6 @@ export const ChangePasswordScreen: React.FC = () => {
   const [secureOld, setSecureOld] = useState(true);
   const [secureNew, setSecureNew] = useState(true);
   const [secureConfirm, setSecureConfirm] = useState(true);
-
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [toastError, setToastError] = useState(false);
 
   const { control, handleSubmit, watch, reset, formState: { errors } } = useForm({
     defaultValues: {
@@ -41,27 +39,17 @@ export const ChangePasswordScreen: React.FC = () => {
         currentPassword: data.currentPassword,
         newPassword: data.newPassword,
       };
-      const response = await apiClient.post('/user/change-password', payload);
-      return response.data;
+      return await userApi.changePassword(payload);
     },
     onSuccess: () => {
-      setToastError(false);
-      setToastMsg('Password changed successfully.');
       reset();
-      setTimeout(() => {
-        navigation.goBack();
-      }, 1500);
-    },
-    onError: (err: any) => {
-      setToastError(true);
-      setToastMsg(err.userMessage || 'Failed to change password. Make sure current password is correct.');
+      navigation.goBack();
     },
   });
 
   const onSubmit = (data: any) => {
     if (!isAdmin) {
-      setToastError(true);
-      setToastMsg('Only Admin users can change password.');
+      showGlobalToast({ message: 'Only Admin users can change password.', type: 'error' });
       return;
     }
     changePassMutation.mutate(data);
@@ -116,7 +104,6 @@ export const ChangePasswordScreen: React.FC = () => {
               name="newPassword"
               rules={{
                 required: 'New password is required',
-                minLength: { value: 6, message: 'Password must be at least 6 characters' },
               }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <View style={styles.inputContainer}>
@@ -185,34 +172,14 @@ export const ChangePasswordScreen: React.FC = () => {
               )}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={changePassMutation.isPending}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={changePassMutation.isPending}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                RESET PASSWORD
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel="RESET PASSWORD"
+              loading={changePassMutation.isPending}
+              disabled={changePassMutation.isPending}
+            />
           </View>
-
-          <Snackbar
-            visible={!!toastMsg}
-            onDismiss={() => setToastMsg(null)}
-            style={toastError ? styles.errorSnackbar : styles.successSnackbar}
-            duration={2500}
-          >
-            {toastMsg}
-          </Snackbar>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -232,21 +199,17 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 16,
     elevation: 2,
+    width: '100%',
+    maxWidth: 540,
+    alignSelf: 'center',
+    borderWidth: Platform.OS === 'web' ? 1 : 0.5,
+    borderColor: themeColors.border,
   },
   inputContainer: {
     marginBottom: 12,
   },
   input: {
     backgroundColor: '#FFFFFF',
-  },
-  saveBtn: {
-    marginTop: 16,
-  },
-  errorSnackbar: {
-    backgroundColor: themeColors.error,
-  },
-  successSnackbar: {
-    backgroundColor: themeColors.success,
   },
 });
 

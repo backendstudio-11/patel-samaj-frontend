@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,8 +11,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
+import { ConfirmationDialog } from '../../components/ConfirmationDialog';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { donorApi } from '../../api/services/donorApi';
 import { formatCurrency, formatFullDate } from '../../utils/format';
 import { Donor } from '../../types';
 
@@ -22,17 +24,36 @@ type NavigationProp = StackNavigationProp<RootStackParamList>;
 export const DonorDetailsScreen: React.FC = () => {
   const route = useRoute<RoutePropType>();
   const navigation = useNavigation<NavigationProp>();
+  const queryClient = useQueryClient();
   const { id } = route.params;
 
   const isAdmin = useSelector((state: RootState) => state.auth.isAdmin);
+  const [deleteVisible, setDeleteVisible] = useState(false);
 
-  const { data: donor, isLoading, isError, error } = useQuery<Donor>({
+  const { data: donor, isLoading, isError } = useQuery<Donor>({
     queryKey: ['donor', id],
-    queryFn: async () => {
-      const res = await apiClient.get(`/donors/${id}`);
-      return res.data;
+    queryFn: () => donorApi.getDonorById(id),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => donorApi.deleteDonor(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['donors'] });
+      setDeleteVisible(false);
+      navigation.goBack();
+    },
+    onError: () => {
+      setDeleteVisible(false);
     },
   });
+
+  const handleDelete = () => {
+    if (!isAdmin) {
+      showGlobalToast({ message: 'Only Admin users can delete donor records.', type: 'error' });
+      return;
+    }
+    deleteMutation.mutate();
+  };
 
   if (isLoading) {
     return (
@@ -108,17 +129,40 @@ export const DonorDetailsScreen: React.FC = () => {
         </Card>
 
         {isAdmin && (
-          <Button
-            mode="contained"
-            onPress={() => navigation.navigate('DonorForm', { id: String(donor.donorId) })}
-            buttonColor={themeColors.primary}
-            icon="pencil"
-            style={styles.editBtn}
-          >
-            Edit Donor Info
-          </Button>
+          <View style={styles.btnRow}>
+            <Button
+              mode="contained"
+              onPress={() => navigation.navigate('DonorForm', { id: String(donor.donorId) })}
+              buttonColor={themeColors.primary}
+              icon="pencil"
+              style={styles.btn}
+            >
+              Edit Donor
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={() => setDeleteVisible(true)}
+              textColor={themeColors.error}
+              icon="delete"
+              style={[styles.btn, { borderColor: themeColors.error }]}
+            >
+              Delete Donor
+            </Button>
+          </View>
         )}
       </ScrollView>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={deleteVisible}
+        title="Delete Donor"
+        message={`Are you sure you want to delete donor "${donor.fullName}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteVisible(false)}
+        loading={deleteMutation.isPending}
+      />
     </View>
   );
 };
@@ -194,14 +238,21 @@ const styles = StyleSheet.create({
     backgroundColor: themeColors.border,
     marginVertical: 4,
   },
-  editBtn: {
+  btnRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 16,
+  },
+  btn: {
     borderRadius: 8,
     height: 48,
     justifyContent: 'center',
     alignSelf: 'center',
-    marginTop: 16,
-    paddingHorizontal: 24,
-    minWidth: 180,
+    paddingHorizontal: 16,
+    minWidth: 130,
+    flex: 1,
   },
   errorContainer: {
     flex: 1,

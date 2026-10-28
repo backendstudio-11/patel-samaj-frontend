@@ -116,7 +116,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
                         {item.name}
                       </Text>
                       <Text variant="bodyMedium" style={styles.itemPrice}>
-                        ₹{item.price.toFixed(2)}
+                        ₹{Math.round(item.price)}
                         {item.availableQty !== undefined && ` • Avail: ${item.availableQty}`}
                       </Text>
                     </View>
@@ -166,6 +166,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     height: '70%',
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,

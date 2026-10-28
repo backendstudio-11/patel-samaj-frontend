@@ -10,10 +10,11 @@ import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
 import { DatePicker } from '../../components/DatePicker';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { expenseApi } from '../../api/services/expenseApi';
 import { Expense } from '../../types';
 
 type RoutePropType = RouteProp<RootStackParamList, 'ExpenseForm'>;
@@ -44,8 +45,7 @@ export const ExpenseFormScreen: React.FC = () => {
       const fetchExpense = async () => {
         setLoadingInitial(true);
         try {
-          const res = await apiClient.get(`/expenses/${editId}`);
-          const expense: Expense = res.data;
+          const expense: Expense = await expenseApi.getExpenseById(editId);
           reset({
             description: expense.description || '',
             amount: expense.amount.toString(),
@@ -67,13 +67,12 @@ export const ExpenseFormScreen: React.FC = () => {
     mutationFn: async (data: any) => {
       const payload = {
         ...(editId ? { expenseId: parseInt(editId, 10) } : {}),
-        amount: parseFloat(data.amount),
+        amount: parseInt(data.amount, 10) || 0,
         expenseDate: data.expenseDate.toISOString().split('T')[0],
         category: data.category || '',
         description: data.description,
       };
-      const response = await apiClient.post('/expenses', payload);
-      return response.data;
+      return await expenseApi.createExpense(payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
@@ -86,7 +85,7 @@ export const ExpenseFormScreen: React.FC = () => {
 
   const onSubmit = (data: any) => {
     if (!isAdmin) {
-      alert('Only Admin users can add or edit expense records.');
+      showGlobalToast({ message: 'Only Admin users can add or edit expense records.', type: 'error' });
       return;
     }
     saveMutation.mutate(data);
@@ -137,16 +136,17 @@ export const ExpenseFormScreen: React.FC = () => {
               name="amount"
               rules={{
                 required: 'Amount is required',
-                validate: (v) => !isNaN(parseFloat(v)) && parseFloat(v) > 0 || 'Enter a valid positive amount',
+                pattern: { value: /^[0-9]+$/, message: 'Amount must be a whole number' },
+                validate: (v) => (!isNaN(parseInt(v, 10)) && parseInt(v, 10) > 0) || 'Enter a valid positive amount',
               }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <View style={styles.inputContainer}>
                   <TextInput
                     label="Amount Charged (₹)"
-                    keyboardType="numeric"
+                    keyboardType="number-pad"
                     mode="outlined"
                     onBlur={onBlur}
-                    onChangeText={onChange}
+                    onChangeText={(val) => onChange(val.replace(/[^0-9]/g, ''))}
                     value={value}
                     outlineColor={themeColors.border}
                     activeOutlineColor={themeColors.primary}
@@ -196,24 +196,13 @@ export const ExpenseFormScreen: React.FC = () => {
 
 
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={saveMutation.isPending || loadingInitial}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={saveMutation.isPending || loadingInitial}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                {editId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel={editId ? 'UPDATE TRANSACTION' : 'SAVE TRANSACTION'}
+              loading={saveMutation.isPending || loadingInitial}
+              disabled={saveMutation.isPending || loadingInitial}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

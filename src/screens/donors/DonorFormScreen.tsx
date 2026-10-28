@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { StyleSheet, View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { TextInput, HelperText, Button } from 'react-native-paper';
 import { useForm, Controller } from 'react-hook-form';
-import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
+import { useRoute, useNavigation, RouteProp, StackActions } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -10,10 +10,11 @@ import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
 import { DatePicker } from '../../components/DatePicker';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { donorApi } from '../../api/services/donorApi';
 import { Donor } from '../../types';
 
 type RoutePropType = RouteProp<RootStackParamList, 'DonorForm'>;
@@ -44,8 +45,7 @@ export const DonorFormScreen: React.FC = () => {
       const fetchDonor = async () => {
         setLoadingInitial(true);
         try {
-          const res = await apiClient.get(`/donors/${editId}`);
-          const donor: Donor = res.data;
+          const donor: Donor = await donorApi.getDonorById(editId);
           reset({
             fullName: donor.fullName,
             amount: donor.amount.toString(),
@@ -62,42 +62,50 @@ export const DonorFormScreen: React.FC = () => {
     }
   }, [editId]);
 
+  const handleSuccessNavigation = () => {
+    if (editId) {
+      // If editing from details screen, pop 2 screens back (to the second last page / donor list)
+      const navState = navigation.getState();
+      const currentIndex = navState?.index ?? 0;
+      if (currentIndex >= 2) {
+        navigation.dispatch(StackActions.pop(2));
+      } else if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        navigation.navigate('DonorList' as any);
+      }
+    } else {
+      navigation.goBack();
+    }
+  };
+
   // Mutation to add/update donor
   const saveDonorMutation = useMutation({
     mutationFn: async (data: any) => {
       const payload = {
         ...(editId ? { donorId: parseInt(editId, 10) } : {}),
         fullName: data.fullName,
-        amount: parseFloat(data.amount),
+        amount: parseInt(data.amount, 10) || 0,
         donationDate: data.donationDate.toISOString(),
         remarks: data.remarks,
       };
-      const response = await apiClient.post('/donors', payload);
-      return response.data;
+      return await donorApi.createDonor(payload);
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       // Invalidate queries to trigger refresh
       queryClient.invalidateQueries({ queryKey: ['donors'] });
       if (editId) {
         queryClient.invalidateQueries({ queryKey: ['donor', editId] });
       }
       
-      Alert.alert(
-        'Success',
-        `Successfully saved donor: ${data.fullName}`,
-        [
-          { text: 'OK', onPress: () => navigation.goBack() }
-        ]
-      );
-    },
-    onError: (error: any) => {
-      Alert.alert('Error', error?.userMessage || 'Failed to save donor. Please try again.');
+      // Instantly redirect to second last page on edit, or previous page on add
+      handleSuccessNavigation();
     },
   });
 
   const onSubmit = (data: any) => {
     if (!isAdmin) {
-      Alert.alert('Permission Denied', 'Only Admin users can add or edit donor details.');
+      showGlobalToast({ message: 'Only Admin users can add or edit donor details.', type: 'error' });
       return;
     }
     saveDonorMutation.mutate(data);
@@ -148,16 +156,17 @@ export const DonorFormScreen: React.FC = () => {
               name="amount"
               rules={{
                 required: 'Donation amount is required',
-                validate: (v) => !isNaN(parseFloat(v)) && parseFloat(v) > 0 || 'Enter a valid positive amount',
+                pattern: { value: /^[0-9]+$/, message: 'Amount must be a whole number (in Rupees)' },
+                validate: (v) => (!isNaN(parseInt(v, 10)) && parseInt(v, 10) > 0) || 'Enter a valid positive amount',
               }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <View style={styles.inputContainer}>
                   <TextInput
                     label="Donation Amount (₹)"
-                    keyboardType="numeric"
+                    keyboardType="number-pad"
                     mode="outlined"
                     onBlur={onBlur}
-                    onChangeText={onChange}
+                    onChangeText={(val) => onChange(val.replace(/[^0-9]/g, ''))}
                     value={value}
                     outlineColor={themeColors.border}
                     activeOutlineColor={themeColors.primary}
@@ -207,24 +216,13 @@ export const DonorFormScreen: React.FC = () => {
               )}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={saveDonorMutation.isPending || loadingInitial}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={saveDonorMutation.isPending || loadingInitial}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                {editId ? 'UPDATE DONOR' : 'SAVE DONOR'}
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel={editId ? 'UPDATE DONOR' : 'SAVE DONOR'}
+              loading={saveDonorMutation.isPending || loadingInitial}
+              disabled={saveDonorMutation.isPending || loadingInitial}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -244,6 +242,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 20,
     borderRadius: 16,
+    width: '100%',
+    alignSelf: 'center',
+    borderWidth: Platform.OS === 'web' ? 1 : 0.5,
+    borderColor: themeColors.border,
     elevation: 2,
   },
   inputContainer: {

@@ -3,15 +3,14 @@ import { StyleSheet, View, ScrollView } from 'react-native';
 import { Text, Card } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Svg, { Rect, G, Text as SvgText, Line } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 
 import { themeColors, shadows } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { expenseApi } from '../../api/services/expenseApi';
-import { formatCurrency, formatDate } from '../../utils/format';
-import { Expense, DailyExpenseSummary } from '../../types';
+import { formatCurrency } from '../../utils/format';
+import { Expense } from '../../types';
 
 export const ExpenseSummaryScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -25,12 +24,7 @@ export const ExpenseSummaryScreen: React.FC = () => {
     },
   });
 
-  const { data: dailySummaries = [], isLoading: loadingDaily } = useQuery<DailyExpenseSummary[]>({
-    queryKey: ['expenses-daily'],
-    queryFn: () => expenseApi.getDailySummary(),
-  });
-
-  if (loadingExpenses || loadingDaily) {
+  if (loadingExpenses) {
     return (
       <View style={{ flex: 1 }}>
         <AppHeader title="Financial Summary" showBack={true} onBack={() => navigation.goBack()} />
@@ -45,7 +39,7 @@ export const ExpenseSummaryScreen: React.FC = () => {
 
   const totalSum = expenses.reduce((s, e) => s + e.amount, 0);
 
-  // Today's Outflow
+  // Today Outflow
   const todayExpenses = expenses.filter((e) => {
     const dStr = new Date(e.expenseDate).toISOString().split('T')[0];
     return dStr === todayStr;
@@ -134,71 +128,6 @@ export const ExpenseSummaryScreen: React.FC = () => {
             })}
             {categoryList.length === 0 && (
               <Text style={styles.emptyText}>No category distribution records found.</Text>
-            )}
-          </Card.Content>
-        </Card>
-
-        {/* Daily Outflow Chart */}
-        <Card style={styles.sectionCard}>
-          <Card.Title
-            title="Recent Daily Outflows"
-            left={(props) => <MaterialCommunityIcons {...props} name="chart-bar" size={24} color={themeColors.secondary} />}
-            titleStyle={styles.cardHeaderTitle}
-          />
-          <Card.Content>
-            {dailySummaries && dailySummaries.length > 0 ? (
-              <View style={styles.chartWrapper}>
-                <Svg height="160" width="300" viewBox="0 0 300 160">
-                  <G>
-                    {/* Render basic bars */}
-                    {dailySummaries.slice(-5).map((summary, idx) => {
-                      const maxVal = Math.max(...dailySummaries.map((s) => s.totalAmount), 1000);
-                      const barHeight = (summary.totalAmount / maxVal) * 100;
-                      const x = 30 + idx * 55;
-                      const y = 120 - barHeight;
-
-                      return (
-                        <G key={idx}>
-                          {/* Bar */}
-                          <Rect
-                            x={x}
-                            y={y}
-                            width="25"
-                            height={barHeight}
-                            fill={themeColors.primary}
-                            rx="4"
-                          />
-                          {/* Label value */}
-                          <SvgText
-                            x={x + 12}
-                            y={y - 6}
-                            fontSize="8"
-                            fill={themeColors.text}
-                            fontWeight="bold"
-                            textAnchor="middle"
-                          >
-                            ₹{summary.totalAmount}
-                          </SvgText>
-                          {/* X label */}
-                          <SvgText
-                            x={x + 12}
-                            y="140"
-                            fontSize="8"
-                            fill={themeColors.textMuted}
-                            textAnchor="middle"
-                          >
-                            {formatDate(summary.date).split('/')[0]}
-                          </SvgText>
-                        </G>
-                      );
-                    })}
-                    {/* Baseline */}
-                    <Line x1="15" y1="120" x2="285" y2="120" stroke={themeColors.border} strokeWidth="1" />
-                  </G>
-                </Svg>
-              </View>
-            ) : (
-              <Text style={styles.emptyText}>No daily transaction summaries found.</Text>
             )}
           </Card.Content>
         </Card>

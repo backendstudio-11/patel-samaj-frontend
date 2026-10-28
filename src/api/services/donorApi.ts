@@ -21,4 +21,9 @@ export const donorApi = {
     const res = await apiClient.post<Donor>('/donors', payload);
     return res.data;
   },
+
+  deleteDonor: async (id: string | number): Promise<any> => {
+    const res = await apiClient.delete(`/donors/${id}`);
+    return res.data;
+  },
 };

@@ -8,6 +8,7 @@ interface DatePickerProps {
   date: Date | string | null | undefined;
   onChange: (date: Date) => void;
   label?: string;
+  minimumDate?: Date;
 }
 
 // Safe date constructor centered at Noon local time to prevent UTC -1 day shift
@@ -66,6 +67,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   date,
   onChange,
   label = 'Select Date',
+  minimumDate,
 }) => {
   const [show, setShow] = useState(false);
   const webInputRef = useRef<HTMLInputElement | null>(null);
@@ -184,6 +186,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             type="date"
             ref={webInputRef}
             value={formatYMD(validDate)}
+            min={minimumDate ? formatYMD(minimumDate) : undefined}
             onChange={(e) => {
               if (e.target.value) {
                 const [y, m, d] = e.target.value.split('-').map(Number);
@@ -221,6 +224,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
           value={validDate}
           mode="date"
           display="default"
+          minimumDate={minimumDate}
           onChange={handleDateChange}
         />
       )}
@@ -247,6 +251,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                 value={tempDate}
                 mode="date"
                 display="spinner"
+                minimumDate={minimumDate}
                 onChange={handleDateChange}
                 style={styles.iosPicker}
               />

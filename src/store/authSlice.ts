@@ -1,12 +1,14 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { User } from '../types';
+import { calculateTokenExpiry } from '../utils/tokenManager';
 
-interface AuthState {
+export interface AuthState {
   token: string | null;
   user: User | null;
   isAuthenticated: boolean;
   isAdmin: boolean;
   rememberedMobile: string | null;
+  expiresAt: number | null;
 }
 
 const initialState: AuthState = {
@@ -15,6 +17,7 @@ const initialState: AuthState = {
   isAuthenticated: false,
   isAdmin: false,
   rememberedMobile: null,
+  expiresAt: null,
 };
 
 const authSlice = createSlice({
@@ -23,12 +26,19 @@ const authSlice = createSlice({
   reducers: {
     setCredentials: (
       state,
-      action: PayloadAction<{ token: string; user: User; isAdmin?: boolean }>
+      action: PayloadAction<{
+        token: string;
+        user: User;
+        isAdmin?: boolean;
+        expiresAt?: number;
+      }>
     ) => {
       state.token = action.payload.token;
       state.user = action.payload.user;
       state.isAuthenticated = true;
       state.isAdmin = action.payload.isAdmin ?? true;
+      state.expiresAt =
+        action.payload.expiresAt ?? calculateTokenExpiry(action.payload.token);
     },
     updateProfile: (state, action: PayloadAction<User>) => {
       state.user = action.payload;
@@ -38,6 +48,7 @@ const authSlice = createSlice({
       state.user = null;
       state.isAuthenticated = false;
       state.isAdmin = false;
+      state.expiresAt = null;
     },
     setRememberedMobile: (state, action: PayloadAction<string | null>) => {
       state.rememberedMobile = action.payload;

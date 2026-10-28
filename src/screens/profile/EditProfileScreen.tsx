@@ -8,10 +8,11 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootState } from '../../store';
 import { updateProfile } from '../../store/authSlice';
-import apiClient from '../../api/client';
+import { userApi } from '../../api/services/userApi';
 import { User, UserProfileDTO } from '../../types';
 
 export const EditProfileScreen: React.FC = () => {
@@ -25,13 +26,12 @@ export const EditProfileScreen: React.FC = () => {
     queryKey: ['user-profile'],
     queryFn: async () => {
       try {
-        const res = await apiClient.get('/user');
-        const data = res.data;
+        const data = await userApi.getUserProfile();
         if (!data) return { fullName: storeUser?.fullName || '', mobileNumber: storeUser?.mobileNumber || '', email: storeUser?.email || '' };
         return {
           fullName: data.fullName || storeUser?.fullName || '',
-          mobileNumber: data.mobileNumber || data.mobile || data.phone || storeUser?.mobileNumber || '',
-          email: data.email || data.emailAddress || storeUser?.email || '',
+          mobileNumber: (data as any).mobileNumber || (data as any).mobile || (data as any).phone || storeUser?.mobileNumber || '',
+          email: data.email || (data as any).emailAddress || storeUser?.email || '',
         };
       } catch {
         return {
@@ -76,20 +76,7 @@ export const EditProfileScreen: React.FC = () => {
         email: formData.email || '',
       };
       
-      let resData: any;
-      try {
-        resData = (await apiClient.put('/user/profile', payload)).data;
-      } catch (err: any) {
-        if (err?.response?.status === 404 || err?.response?.status === 405) {
-          try {
-            resData = (await apiClient.post('/profile', payload)).data;
-          } catch {
-            resData = (await apiClient.put('/user/profile', payload)).data;
-          }
-        } else {
-          throw err;
-        }
-      }
+      const resData = await userApi.updateProfile(payload);
 
       const updatedUser: User = {
         userId: Number(resData?.userId || resData?.id || storeUser?.userId || 1),
@@ -111,7 +98,7 @@ export const EditProfileScreen: React.FC = () => {
 
   const onSubmit = (formData: UserProfileDTO) => {
     if (!isAdmin) {
-      alert('Only Admin users can edit profile information.');
+      showGlobalToast({ message: 'Only Admin users can edit profile information.', type: 'error' });
       return;
     }
     updateProfileMutation.mutate(formData);
@@ -217,24 +204,13 @@ export const EditProfileScreen: React.FC = () => {
               )}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={updateProfileMutation.isPending}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={updateProfileMutation.isPending}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                SAVE CHANGES
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel="SAVE CHANGES"
+              loading={updateProfileMutation.isPending}
+              disabled={updateProfileMutation.isPending}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -255,6 +231,11 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 16,
     elevation: 2,
+    width: '100%',
+    maxWidth: 540,
+    alignSelf: 'center',
+    borderWidth: Platform.OS === 'web' ? 1 : 0.5,
+    borderColor: themeColors.border,
   },
   inputContainer: {
     marginBottom: 12,

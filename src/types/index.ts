@@ -39,7 +39,6 @@ export interface Item {
   itemName: string;
   currentPrice: number;
   description?: string;
-  isAvailable: boolean;
 }
 
 export interface EventItem {

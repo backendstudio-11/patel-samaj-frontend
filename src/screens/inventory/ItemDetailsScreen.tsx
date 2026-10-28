@@ -13,7 +13,7 @@ import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { ConfirmationDialog } from '../../components/ConfirmationDialog';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { inventoryApi } from '../../api/services/inventoryApi';
 import { formatCurrency } from '../../utils/format';
 import { Item } from '../../types';
 
@@ -32,17 +32,11 @@ export const ItemDetailsScreen: React.FC = () => {
 
   const { data: item, isLoading, isError, refetch } = useQuery<Item>({
     queryKey: ['item', id],
-    queryFn: async () => {
-      const res = await apiClient.get(`/items/${id}`);
-      return res.data;
-    },
+    queryFn: () => inventoryApi.getItemById(id),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiClient.delete(`/items/${id}`);
-      return res.data;
-    },
+    mutationFn: () => inventoryApi.deleteItem(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       setDeleteVisible(false);
@@ -78,8 +72,6 @@ export const ItemDetailsScreen: React.FC = () => {
     );
   }
 
-  const isAvailable = item.isAvailable;
-
   return (
     <View style={styles.container}>
       <AppHeader
@@ -106,27 +98,11 @@ export const ItemDetailsScreen: React.FC = () => {
             </View>
 
             <View style={styles.detailsGrid}>
-              <View style={styles.detailRow}>
-                <Text style={styles.label}>Status</Text>
-                <Badge
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: isAvailable ? themeColors.success + '15' : themeColors.error + '15',
-                      color: isAvailable ? themeColors.success : themeColors.error }
-                  ]}
-                >
-                  {isAvailable ? 'AVAILABLE' : 'RENTED / UNAVAILABLE'}
-                </Badge>
-              </View>
-
               {item.description && (
-                <>
-                  <View style={styles.divider} />
-                  <View style={[styles.detailRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
-                    <Text style={[styles.label, { marginBottom: 6 }]}>Description</Text>
-                    <Text style={styles.descriptionText}>{item.description}</Text>
-                  </View>
-                </>
+                <View style={[styles.detailRow, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+                  <Text style={[styles.label, { marginBottom: 6 }]}>Description</Text>
+                  <Text style={styles.descriptionText}>{item.description}</Text>
+                </View>
               )}
             </View>
           </Card.Content>
@@ -249,6 +225,7 @@ const styles = StyleSheet.create({
   btnRow: {
     flexDirection: 'row',
     justifyContent: 'center',
+    flexWrap: 'wrap',
     gap: 12,
     marginTop: 16,
   },
@@ -259,6 +236,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: 16,
     minWidth: 130,
+    flex: 1,
   },
   errorContainer: {
     flex: 1,

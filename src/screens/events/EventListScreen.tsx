@@ -151,7 +151,7 @@ export const EventListScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <AppHeader title="Events & Hall Bookings" />
+      <AppHeader title="Events" />
 
       {/* Top Tabs Custom bar - shown for Admin */}
       {isAdmin && (
@@ -166,7 +166,7 @@ export const EventListScreen: React.FC = () => {
       {/* Search Section */}
       <View style={styles.searchSection}>
         <SearchBar
-          placeholder="Search events by family head name or type..."
+          placeholder="Search events by family head name..."
           value={search}
           onChangeText={handleSearchChange}
         />
