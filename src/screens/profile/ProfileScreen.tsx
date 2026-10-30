@@ -17,7 +17,7 @@ import { clearStoredToken } from '../../utils/tokenManager';
 import { RootState } from '../../store';
 import { RootStackParamList } from '../../navigation/types';
 import { userApi } from '../../api/services/userApi';
-import { authApi } from '../../api/services/authApi';
+import { authApi, performLogout } from '../../api/services/authApi';
 import { User, UserProfileDTO } from '../../types';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
@@ -55,25 +55,15 @@ export const ProfileScreen: React.FC = () => {
   const handleLogout = async () => {
     setLogoutLoading(true);
     try {
-      // POST logout to backend
-      await authApi.logout();
-    } catch (err) {
-      // Suppress network failure, clear auth local session anyway
+      await performLogout(dispatch);
     } finally {
-      // Remove Token from storage
-      await clearStoredToken();
-
-      // Clear Redux state
-      dispatch(logoutAction());
-
       setLogoutLoading(false);
       setLogoutVisible(false);
     }
   };
 
   const goToAdminLogin = async () => {
-    await clearStoredToken();
-    dispatch(logoutAction());
+    await performLogout(dispatch);
     navigation.reset({
       index: 0,
       routes: [{ name: 'Login' as any }],

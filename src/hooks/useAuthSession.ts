@@ -2,27 +2,59 @@ import { useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { RootState } from '../store';
-import { logoutAction } from '../store/authSlice';
-import { isTokenExpired, clearStoredToken } from '../utils/tokenManager';
+import { updateTokens } from '../store/authSlice';
+import { authApi, performLogout } from '../api/services/authApi';
+import {
+  isTokenExpired,
+  setStoredTokens,
+  parseExpiryToMs,
+  calculateTokenExpiry,
+} from '../utils/tokenManager';
 
 /**
- * Custom hook to monitor token expiration lifecycle:
- * - Checks expiration immediately on mount / rehydration.
- * - Checks expiration on AppState transition to 'active' (app resume / foreground).
- * - Schedules a real-time timer while active to automatically log out when 24h expires.
+ * Custom hook to monitor session lifecycle:
+ * - Checks access token expiration on mount and on AppState resume.
+ * - Triggers silent token refresh when access token expires.
+ * - Invokes centralized performLogout only if refresh token has expired or is revoked.
  */
 export const useAuthSession = () => {
   const dispatch = useDispatch();
-  const { token, expiresAt, isAuthenticated } = useSelector(
+  const { token, refreshToken, expiresAt, isAuthenticated } = useSelector(
     (state: RootState) => state.auth
   );
   const appState = useRef<AppStateStatus>(AppState.currentState);
+  const isRefreshingRef = useRef<boolean>(false);
 
-  const checkAndHandleExpiry = () => {
-    if (isAuthenticated || token) {
-      if (isTokenExpired(token, expiresAt)) {
-        clearStoredToken();
-        dispatch(logoutAction());
+  const checkAndHandleExpiry = async () => {
+    if (!isAuthenticated || !token) {
+      return;
+    }
+
+    if (isTokenExpired(token, expiresAt) && !isRefreshingRef.current) {
+      isRefreshingRef.current = true;
+      try {
+        const refreshResponse = await authApi.refreshToken(refreshToken);
+        if (refreshResponse?.jwtToken) {
+          const newJwtToken = refreshResponse.jwtToken;
+          const newRefreshToken = refreshResponse.refreshToken;
+          const newExpireAt = refreshResponse.expireAt;
+          const expiresAtMs =
+            parseExpiryToMs(newExpireAt) ?? calculateTokenExpiry(newJwtToken);
+
+          await setStoredTokens(newJwtToken, newRefreshToken);
+          dispatch(
+            updateTokens({
+              token: newJwtToken,
+              refreshToken: newRefreshToken,
+              expiresAt: expiresAtMs,
+            })
+          );
+        }
+      } catch {
+        // Refresh token invalid, expired, or revoked on backend
+        await performLogout(dispatch);
+      } finally {
+        isRefreshingRef.current = false;
       }
     }
   };
@@ -31,7 +63,7 @@ export const useAuthSession = () => {
     // 1. Immediate check on mount / state change
     checkAndHandleExpiry();
 
-    if (!isAuthenticated || !token || !expiresAt) {
+    if (!isAuthenticated || !token) {
       return;
     }
 
@@ -50,15 +82,16 @@ export const useAuthSession = () => {
     );
 
     // 3. Exact timeout for token expiry
-    const msUntilExpiry = expiresAt - Date.now();
     let timerId: ReturnType<typeof setTimeout> | null = null;
-
-    if (msUntilExpiry > 0) {
-      timerId = setTimeout(() => {
+    if (expiresAt) {
+      const msUntilExpiry = expiresAt - Date.now();
+      if (msUntilExpiry > 0) {
+        timerId = setTimeout(() => {
+          checkAndHandleExpiry();
+        }, msUntilExpiry);
+      } else {
         checkAndHandleExpiry();
-      }, msUntilExpiry);
-    } else {
-      checkAndHandleExpiry();
+      }
     }
 
     // 4. Periodic background sanity interval check (every 30 seconds)
@@ -71,5 +104,5 @@ export const useAuthSession = () => {
       if (timerId) clearTimeout(timerId);
       clearInterval(intervalId);
     };
-  }, [isAuthenticated, token, expiresAt, dispatch]);
+  }, [isAuthenticated, token, refreshToken, expiresAt, dispatch]);
 };

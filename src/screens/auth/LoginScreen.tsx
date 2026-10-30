@@ -10,7 +10,11 @@ import { themeColors } from '../../theme';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { RootState } from '../../store';
 import { setCredentials, setRememberedMobile } from '../../store/authSlice';
-import { setStoredToken } from '../../utils/tokenManager';
+import {
+  setStoredTokens,
+  parseExpiryToMs,
+  calculateTokenExpiry,
+} from '../../utils/tokenManager';
 import { authApi } from '../../api/services/authApi';
 import { userApi } from '../../api/services/userApi';
 import { RootStackParamList } from '../../navigation/types';
@@ -53,21 +57,42 @@ export const LoginScreen: React.FC = () => {
       });
 
       let token = '';
+      let refreshToken = '';
+      let expireAt: string | undefined;
+
       if (typeof loginData === 'string') {
         token = loginData;
       } else if (loginData && typeof loginData === 'object') {
-        token = loginData.token || loginData.accessToken || loginData.jwtToken || loginData.jwt;
+        token =
+          loginData.jwtToken ||
+          (loginData as any).token ||
+          (loginData as any).accessToken ||
+          (loginData as any).jwt ||
+          '';
+        refreshToken = loginData.refreshToken || '';
+        expireAt = loginData.expireAt;
       }
 
       if (!token) {
         throw new Error('Authentication failed: JWT Token is missing in server response.');
       }
 
-      // Store JWT Token in AsyncStorage
-      await setStoredToken(token);
+      const expiresAtMs =
+        parseExpiryToMs(expireAt) ?? calculateTokenExpiry(token);
+
+      // Store JWT Token & Refresh Token in AsyncStorage
+      await setStoredTokens(token, refreshToken);
 
       // Save initial token into Redux so interceptor picks up Bearer token
-      dispatch(setCredentials({ token, user: null as any, isAdmin: false }));
+      dispatch(
+        setCredentials({
+          token,
+          refreshToken,
+          user: null as any,
+          isAdmin: false,
+          expiresAt: expiresAtMs,
+        })
+      );
 
       let fetchedUser = {
         userId: 1,
@@ -107,7 +132,15 @@ export const LoginScreen: React.FC = () => {
       }
 
       // 4. Save User Credentials & Role details in Redux
-      dispatch(setCredentials({ token, user: fetchedUser, isAdmin: computedIsAdmin }));
+      dispatch(
+        setCredentials({
+          token,
+          refreshToken,
+          user: fetchedUser,
+          isAdmin: computedIsAdmin,
+          expiresAt: expiresAtMs,
+        })
+      );
 
       // Manage Remember Login
       if (rememberMe) {

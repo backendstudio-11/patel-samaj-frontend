@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { themeColors } from '../theme';
 import { RootState } from '../store';
 import { RootStackParamList } from './types';
+import { useAuthSession } from '../hooks/useAuthSession';
 
 // Auth Screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -191,6 +192,7 @@ const MainTabNavigator = () => {
 };
 
 export const AppNavigator = () => {
+  useAuthSession();
   const isAuthenticated = useSelector((state: RootState) => state.auth.isAuthenticated);
 
   return (

@@ -1,3 +1,14 @@
+export interface AuthResponse {
+  jwtToken: string;
+  refreshToken: string;
+  expireAt: string;
+}
+
+export interface AuthenticationDTO {
+  mobileNumber: string;
+  password: string;
+}
+
 export interface UserProfileDTO {
   fullName: string;
   mobileNumber: string;

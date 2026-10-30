@@ -1,11 +1,23 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const TOKEN_STORAGE_KEY = 'jwt_token';
-export const TOKEN_EXPIRY_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+export const REFRESH_TOKEN_STORAGE_KEY = 'refresh_token';
+export const TOKEN_EXPIRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes default for access token
 
-/**
- * Decodes the payload from a JWT token safely in any environment (Web, iOS, Android).
- */
+export const parseExpiryToMs = (expireAt?: string | number | null): number | null => {
+  if (!expireAt) return null;
+  if (typeof expireAt === 'number') {
+    return expireAt < 10000000000 ? expireAt * 1000 : expireAt;
+  }
+  if (typeof expireAt === 'string') {
+    const parsed = Date.parse(expireAt);
+    if (!isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
 export const parseJwtPayload = (token: string): { exp?: number; [key: string]: any } | null => {
   try {
     if (!token || typeof token !== 'string') return null;
@@ -50,44 +62,43 @@ export const parseJwtPayload = (token: string): { exp?: number; [key: string]: a
   }
 };
 
-/**
- * Calculates when the token should expire:
- * Defaults to 24 hours from now, or earlier if the JWT payload specifies an earlier expiration.
- */
 export const calculateTokenExpiry = (
   token?: string | null,
+  expireAt?: string | number | null,
   durationMs: number = TOKEN_EXPIRY_DURATION_MS
 ): number => {
+  const fromExpireAt = parseExpiryToMs(expireAt);
+  if (fromExpireAt && fromExpireAt > Date.now()) {
+    return fromExpireAt;
+  }
+
   const now = Date.now();
-  const maxExpiry = now + durationMs;
+  const defaultExpiry = now + durationMs;
 
   if (token) {
     const payload = parseJwtPayload(token);
     if (payload && typeof payload.exp === 'number') {
       const jwtExpMs = payload.exp * 1000;
-      // If JWT exp is valid and in the future, use the minimum of maxExpiry and jwtExpMs
       if (jwtExpMs > now) {
-        return Math.min(maxExpiry, jwtExpMs);
+        return jwtExpMs;
       }
     }
   }
 
-  return maxExpiry;
+  return defaultExpiry;
 };
 
-/**
- * Checks whether a token or session has expired based on expiresAt timestamp and JWT exp.
- */
 export const isTokenExpired = (
   token: string | null | undefined,
-  expiresAt: number | null | undefined
+  expiresAt: number | null | undefined,
+  bufferMs: number = 5000
 ): boolean => {
   if (!token) return true;
 
   const now = Date.now();
 
-  // Check against recorded 24h expiration timestamp
-  if (expiresAt && now >= expiresAt) {
+  // Check against recorded expiration timestamp
+  if (expiresAt && now + bufferMs >= expiresAt) {
     return true;
   }
 
@@ -95,7 +106,7 @@ export const isTokenExpired = (
   const payload = parseJwtPayload(token);
   if (payload && typeof payload.exp === 'number') {
     const jwtExpMs = payload.exp * 1000;
-    if (now >= jwtExpMs) {
+    if (now + bufferMs >= jwtExpMs) {
       return true;
     }
   }
@@ -104,13 +115,24 @@ export const isTokenExpired = (
 };
 
 /**
- * Removes the JWT token from AsyncStorage.
+ * Retrieves the stored JWT token from AsyncStorage.
  */
-export const clearStoredToken = async (): Promise<void> => {
+export const getStoredToken = async (): Promise<string | null> => {
   try {
-    await AsyncStorage.removeItem(TOKEN_STORAGE_KEY);
-  } catch (error) {
-    // Suppress storage clearance errors
+    return await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Retrieves the stored refresh token from AsyncStorage.
+ */
+export const getStoredRefreshToken = async (): Promise<string | null> => {
+  try {
+    return await AsyncStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
   }
 };
 
@@ -120,7 +142,52 @@ export const clearStoredToken = async (): Promise<void> => {
 export const setStoredToken = async (token: string): Promise<void> => {
   try {
     await AsyncStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch (error) {
+  } catch {
     // Suppress storage write errors
   }
 };
+
+/**
+ * Stores the refresh token in AsyncStorage.
+ */
+export const setStoredRefreshToken = async (refreshToken: string): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+  } catch {
+    // Suppress storage write errors
+  }
+};
+
+/**
+ * Stores both access token and refresh token in AsyncStorage.
+ */
+export const setStoredTokens = async (
+  token: string,
+  refreshToken?: string | null
+): Promise<void> => {
+  try {
+    const items: [string, string][] = [[TOKEN_STORAGE_KEY, token]];
+    if (refreshToken) {
+      items.push([REFRESH_TOKEN_STORAGE_KEY, refreshToken]);
+    }
+    await AsyncStorage.multiSet(items);
+  } catch {
+    // Suppress storage write errors
+  }
+};
+
+/**
+ * Removes both JWT access token and refresh token from AsyncStorage.
+ */
+export const clearStoredTokens = async (): Promise<void> => {
+  try {
+    await AsyncStorage.multiRemove([TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY]);
+  } catch {
+    // Suppress storage clearance errors
+  }
+};
+
+/**
+ * Backward compatibility alias for clearStoredTokens.
+ */
+export const clearStoredToken = clearStoredTokens;

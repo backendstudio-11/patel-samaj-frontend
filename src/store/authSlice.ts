@@ -4,6 +4,7 @@ import { calculateTokenExpiry } from '../utils/tokenManager';
 
 export interface AuthState {
   token: string | null;
+  refreshToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
   isAdmin: boolean;
@@ -13,6 +14,7 @@ export interface AuthState {
 
 const initialState: AuthState = {
   token: null,
+  refreshToken: null,
   user: null,
   isAuthenticated: false,
   isAdmin: false,
@@ -28,15 +30,34 @@ const authSlice = createSlice({
       state,
       action: PayloadAction<{
         token: string;
+        refreshToken?: string | null;
         user: User;
         isAdmin?: boolean;
         expiresAt?: number;
       }>
     ) => {
       state.token = action.payload.token;
+      if (action.payload.refreshToken !== undefined) {
+        state.refreshToken = action.payload.refreshToken;
+      }
       state.user = action.payload.user;
       state.isAuthenticated = true;
       state.isAdmin = action.payload.isAdmin ?? true;
+      state.expiresAt =
+        action.payload.expiresAt ?? calculateTokenExpiry(action.payload.token);
+    },
+    updateTokens: (
+      state,
+      action: PayloadAction<{
+        token: string;
+        refreshToken?: string | null;
+        expiresAt?: number;
+      }>
+    ) => {
+      state.token = action.payload.token;
+      if (action.payload.refreshToken !== undefined) {
+        state.refreshToken = action.payload.refreshToken;
+      }
       state.expiresAt =
         action.payload.expiresAt ?? calculateTokenExpiry(action.payload.token);
     },
@@ -45,6 +66,7 @@ const authSlice = createSlice({
     },
     logoutAction: (state) => {
       state.token = null;
+      state.refreshToken = null;
       state.user = null;
       state.isAuthenticated = false;
       state.isAdmin = false;
@@ -56,7 +78,12 @@ const authSlice = createSlice({
   },
 });
 
-export const { setCredentials, updateProfile, logoutAction, setRememberedMobile } =
-  authSlice.actions;
+export const {
+  setCredentials,
+  updateTokens,
+  updateProfile,
+  logoutAction,
+  setRememberedMobile,
+} = authSlice.actions;
 
 export default authSlice.reducer;

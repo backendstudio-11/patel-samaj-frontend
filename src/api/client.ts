@@ -1,45 +1,129 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 import { store } from '../store';
-import { logoutAction } from '../store/authSlice';
-import { isTokenExpired, clearStoredToken } from '../utils/tokenManager';
+import { logoutAction, updateTokens } from '../store/authSlice';
+import {
+  setStoredTokens,
+  clearStoredTokens,
+  parseExpiryToMs,
+  calculateTokenExpiry,
+} from '../utils/tokenManager';
 import { showGlobalToast } from '../context/ToastContext';
+import { AuthResponse } from '../types';
 
 export const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080/api';
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
   timeout: 10000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Interceptor to inject bearer token
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (token: string | null) => void;
+  reject: (reason?: any) => void;
+}> = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+/**
+ * Isolated call to refresh access token using refresh token cookie or header.
+ * Uses plain axios to bypass apiClient interceptors and avoid circular retry loops.
+ */
+const executeTokenRefresh = async (): Promise<AuthResponse> => {
+  const refreshToken = store.getState().auth?.refreshToken;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (Platform.OS !== 'web' && refreshToken) {
+    headers['Cookie'] = `refreshToken=${refreshToken}`;
+  }
+
+  const response = await axios.post<AuthResponse>(
+    `${BASE_URL}/auth/refresh-token`,
+    {},
+    {
+      headers,
+      withCredentials: true,
+      timeout: 10000,
+    }
+  );
+  return response.data;
+};
+
+/**
+ * Handles fatal authentication failure by notifying backend to revoke token/cookie
+ * and cleaning up all local tokens and Redux session.
+ */
+const handleAuthFailure = async (): Promise<void> => {
+  try {
+    const refreshToken = store.getState().auth?.refreshToken;
+    const headers: Record<string, string> = {};
+    if (Platform.OS !== 'web' && refreshToken) {
+      headers['Cookie'] = `refreshToken=${refreshToken}`;
+    }
+    await axios.post(
+      `${BASE_URL}/auth/logout`,
+      {},
+      {
+        headers,
+        withCredentials: true,
+        timeout: 5000,
+      }
+    );
+  } catch {
+    // Suppress network errors during logout
+  } finally {
+    await clearStoredTokens();
+    store.dispatch(logoutAction());
+  }
+};
+
+// Interceptor to inject bearer token and native cookie header
 apiClient.interceptors.request.use(
   (config) => {
-    const isPublic =
-      config.url &&
-      (config.url.includes('/auth/login') ||
-        config.url.includes('/auth/forgot-password'));
+    const url = config.url || '';
+    const isAuthRoute =
+      url.includes('/auth/login') ||
+      url.includes('/auth/forgot-password') ||
+      url.includes('/auth/refresh-token');
 
-    if (isPublic) {
+    // On native platforms, explicitly forward refreshToken cookie if available
+    if (Platform.OS !== 'web') {
+      const refreshToken = store.getState().auth?.refreshToken;
+      if (refreshToken) {
+        if (!config.headers) {
+          config.headers = {} as any;
+        }
+        if (typeof config.headers.set === 'function') {
+          config.headers.set('Cookie', `refreshToken=${refreshToken}`);
+        } else {
+          config.headers['Cookie'] = `refreshToken=${refreshToken}`;
+        }
+      }
+    }
+
+    if (isAuthRoute) {
       return config;
     }
 
     const state = store.getState();
     const token = state.auth?.token;
-    const expiresAt = state.auth?.expiresAt;
 
     if (token) {
-      // Check if the 24-hour token or JWT expiry has passed
-      if (isTokenExpired(token, expiresAt)) {
-        clearStoredToken();
-        store.dispatch(logoutAction());
-        const silentAuthError = new Error('Unauthorized');
-        (silentAuthError as any).isAuthError = true;
-        return Promise.reject(silentAuthError);
-      }
-
       if (config.headers) {
         if (typeof config.headers.set === 'function') {
           config.headers.set('Authorization', `Bearer ${token}`);
@@ -206,28 +290,104 @@ apiClient.interceptors.response.use(
 
     const isMutating = ['post', 'put', 'patch', 'delete'].includes(method);
     const isListQuery = url.endsWith('/list') || url.includes('/list?');
+    const isRefreshToken = url.includes('/auth/refresh-token');
     const suppressToast =
       config.headers?.['x-suppress-toast'] === 'true' ||
       config.headers?.['x-suppress-toast'] === true;
 
-    if (isMutating && !isListQuery && !suppressToast) {
+    if (isMutating && !isListQuery && !isRefreshToken && !suppressToast) {
       const message = extractSuccessMessage(response);
       showGlobalToast({ message, type: 'success' });
     }
 
     return response;
   },
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
     const status = error.response?.status;
-    const isAuthError =
+    const url = originalRequest?.url || '';
+
+    const isLoginRoute = url.includes('/auth/login');
+    const isRefreshRoute = url.includes('/auth/refresh-token');
+    const isLogoutRoute = url.includes('/auth/logout');
+    const isAuthRoute = isLoginRoute || isRefreshRoute || isLogoutRoute;
+
+    const is401 =
       status === 401 ||
-      status === 403 ||
       error?.isAuthError ||
       error?.message === 'Unauthorized';
 
-    if (isAuthError) {
-      clearStoredToken();
-      store.dispatch(logoutAction());
+    // Intercept 401 on authenticated API requests to trigger silent token refresh
+    if (is401 && !isAuthRoute && originalRequest && !originalRequest._retry) {
+      if (isRefreshing) {
+        // Queue this request while refresh is in flight
+        return new Promise<string | null>((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            if (originalRequest.headers) {
+              if (typeof originalRequest.headers.set === 'function') {
+                originalRequest.headers.set('Authorization', `Bearer ${token}`);
+              } else {
+                originalRequest.headers['Authorization'] = `Bearer ${token}`;
+              }
+            }
+            return apiClient(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const refreshData = await executeTokenRefresh();
+        const newJwtToken = refreshData.jwtToken;
+        const newRefreshToken = refreshData.refreshToken;
+        const newExpireAt = refreshData.expireAt;
+        const expiresAtMs =
+          parseExpiryToMs(newExpireAt) ?? calculateTokenExpiry(newJwtToken);
+
+        await setStoredTokens(newJwtToken, newRefreshToken);
+        store.dispatch(
+          updateTokens({
+            token: newJwtToken,
+            refreshToken: newRefreshToken,
+            expiresAt: expiresAtMs,
+          })
+        );
+
+        if (apiClient.defaults.headers.common) {
+          apiClient.defaults.headers.common['Authorization'] = `Bearer ${newJwtToken}`;
+        }
+
+        if (originalRequest.headers) {
+          if (typeof originalRequest.headers.set === 'function') {
+            originalRequest.headers.set('Authorization', `Bearer ${newJwtToken}`);
+          } else {
+            originalRequest.headers['Authorization'] = `Bearer ${newJwtToken}`;
+          }
+        }
+
+        processQueue(null, newJwtToken);
+        return apiClient(originalRequest);
+      } catch (refreshErr) {
+        processQueue(refreshErr, null);
+        await handleAuthFailure();
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    // Handle 401 on auth routes or when retry already failed
+    if (is401 && (isAuthRoute || originalRequest?._retry)) {
+      // Login 401 = bad credentials — do NOT wipe session, just reject
+      if (!isLoginRoute) {
+        if (isRefreshRoute || originalRequest?._retry) {
+          await handleAuthFailure();
+        }
+      }
       return Promise.reject(error);
     }
 
