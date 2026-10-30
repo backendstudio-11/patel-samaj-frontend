@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, FlatList, RefreshControl } from 'react-native';
-import { Text, FAB } from 'react-native-paper';
+import { Text, FAB, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 
@@ -14,6 +14,7 @@ import { ReusableCard } from '../../components/ReusableCard';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { EmptyState } from '../../components/EmptyState';
 import { PaginationControl } from '../../components/PaginationControl';
+import { ConfirmationDialog } from '../../components/ConfirmationDialog';
 import { RootStackParamList } from '../../navigation/types';
 import { expenseApi } from '../../api/services/expenseApi';
 import { formatCurrency, formatDate } from '../../utils/format';
@@ -24,11 +25,13 @@ type NavigationProp = StackNavigationProp<RootStackParamList>;
 
 export const ExpenseListScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 500);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const isAdmin = useSelector((state: RootState) => state.auth.isAdmin);
 
@@ -36,6 +39,17 @@ export const ExpenseListScreen: React.FC = () => {
   const { data: pageData, isLoading, refetch } = useQuery<PageResponse<Expense>>({
     queryKey: ['expenses', debouncedSearch, page, pageSize],
     queryFn: () => expenseApi.getExpenses({ search: debouncedSearch, page, size: pageSize }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => expenseApi.deleteExpense(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      setDeleteId(null);
+    },
+    onError: () => {
+      setDeleteId(null);
+    },
   });
 
   const expenses = pageData?.content || [];
@@ -53,17 +67,23 @@ export const ExpenseListScreen: React.FC = () => {
     setRefreshing(false);
   };
 
+  const handleDeleteConfirm = () => {
+    if (deleteId && isAdmin) {
+      deleteMutation.mutate(deleteId);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <AppHeader
-        title="Samaj Expenses"
+        title="Expenses"
         rightActionIcon="chart-donut"
         onRightAction={() => navigation.navigate('ExpenseSummary')}
       />
 
       <View style={styles.searchSection}>
         <SearchBar
-          placeholder="Search expenses by name or category..."
+          placeholder="Search expenses by category or description..."
           value={search}
           onChangeText={handleSearchChange}
         />
@@ -99,6 +119,23 @@ export const ExpenseListScreen: React.FC = () => {
               <View style={styles.cardFooter}>
                 <Text style={styles.dateLabel}>Date: {formatDate(item.expenseDate)}</Text>
               </View>
+
+              {isAdmin && (
+                <View style={styles.cardActions}>
+                  <IconButton
+                    icon="pencil-outline"
+                    size={20}
+                    iconColor={themeColors.secondary}
+                    onPress={() => navigation.navigate('ExpenseForm', { id: String(item.expenseId) })}
+                  />
+                  <IconButton
+                    icon="delete-outline"
+                    size={20}
+                    iconColor={themeColors.error}
+                    onPress={() => setDeleteId(String(item.expenseId))}
+                  />
+                </View>
+              )}
             </ReusableCard>
           )}
           ListFooterComponent={
@@ -137,6 +174,18 @@ export const ExpenseListScreen: React.FC = () => {
           onPress={() => navigation.navigate('ExpenseForm')}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={!!deleteId}
+        title="Delete Expense"
+        message="Are you sure you want to delete this expense record? This action cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteId(null)}
+        loading={deleteMutation.isPending}
+      />
     </View>
   );
 };
@@ -184,6 +233,12 @@ const styles = StyleSheet.create({
   dateLabel: {
     fontSize: 12,
     color: themeColors.textMuted,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    marginRight: -8,
   },
   fab: {
     position: 'absolute',

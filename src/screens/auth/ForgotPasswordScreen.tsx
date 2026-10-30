@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
-import { Text, TextInput, Snackbar, HelperText } from 'react-native-paper';
+import { Text, TextInput, HelperText, Button } from 'react-native-paper';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useForm, Controller } from 'react-hook-form';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -8,7 +9,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { themeColors } from '../../theme';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { AppHeader } from '../../components/AppHeader';
-import apiClient from '../../api/client';
+import { authApi } from '../../api/services/authApi';
 import { RootStackParamList } from '../../navigation/types';
 
 type NavigationProp = StackNavigationProp<RootStackParamList, 'ForgotPassword'>;
@@ -16,8 +17,6 @@ type NavigationProp = StackNavigationProp<RootStackParamList, 'ForgotPassword'>;
 export const ForgotPasswordScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const [loading, setLoading] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { control, handleSubmit, formState: { errors } } = useForm({
     defaultValues: {
@@ -25,30 +24,16 @@ export const ForgotPasswordScreen: React.FC = () => {
     },
   });
 
-  const onSubmit = async (data: any) => {
+  const onSubmit = async (data: { email: string }) => {
     setLoading(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
     try {
-      await apiClient.post('/auth/forgot-password', {
-        email: data.email,
-      });
-      setSuccessMsg('If that email exists, a new password has been sent.');
-    } catch (err: any) {
-      // Per prompt requirement, even if there's a failure (e.g. user not found),
-      // we can handle it gracefully. However, standard response is showing the user message or fallback.
-      setErrorMsg(err.userMessage || 'An error occurred. Please try again.');
+      await authApi.forgotPassword(data.email);
+      setTimeout(() => {
+        navigation.navigate('Login');
+      }, 1000);
+    } catch {
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSnackbarDismiss = () => {
-    if (successMsg) {
-      setSuccessMsg(null);
-      navigation.navigate('Login');
-    } else {
-      setErrorMsg(null);
     }
   };
 
@@ -60,69 +45,79 @@ export const ForgotPasswordScreen: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardContainer}
       >
-        <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-          <View style={styles.infoSection}>
-            <Text variant="bodyLarge" style={styles.infoText}>
-              Please enter your registered email address. We will verify it and send a new generated password if it exists in the system.
-            </Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.centerWrapper}>
+            <View style={styles.formCard}>
+              <View style={styles.iconCircle}>
+                <MaterialCommunityIcons name="lock-reset" size={40} color={themeColors.primary} />
+              </View>
+
+              <Text variant="headlineSmall" style={styles.formTitle}>
+                Reset Password
+              </Text>
+              <Text variant="bodyMedium" style={styles.infoText}>
+                Enter your registered email address. We will verify and send a newly generated password to your inbox.
+              </Text>
+
+              <Controller
+                control={control}
+                name="email"
+                rules={{
+                  required: 'Email address is required',
+                  pattern: {
+                    value: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+                    message: 'Enter a valid email address',
+                  },
+                }}
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      label="Email Address"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      onBlur={onBlur}
+                      onChangeText={onChange}
+                      value={value}
+                      mode="outlined"
+                      outlineColor={themeColors.border}
+                      activeOutlineColor={themeColors.primary}
+                      error={!!errors.email}
+                      left={<TextInput.Icon icon="email" color={themeColors.textMuted} />}
+                      style={styles.textInput}
+                    />
+                    {errors.email && (
+                      <HelperText type="error" visible={true}>
+                        {errors.email.message}
+                      </HelperText>
+                    )}
+                  </View>
+                )}
+              />
+
+              <PrimaryButton
+                onPress={handleSubmit(onSubmit)}
+                loading={loading}
+                style={styles.submitBtn}
+              >
+                RESET PASSWORD
+              </PrimaryButton>
+
+              <Button
+                mode="text"
+                icon="arrow-left"
+                onPress={() => navigation.navigate('Login')}
+                textColor={themeColors.textMuted}
+                style={styles.backBtn}
+                labelStyle={styles.backBtnLabel}
+              >
+                Back to Login
+              </Button>
+            </View>
           </View>
-
-          <View style={styles.formSection}>
-            <Controller
-              control={control}
-              name="email"
-              rules={{
-                required: 'Email address is required',
-                pattern: {
-                  value: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
-                  message: 'Enter a valid email address',
-                },
-              }}
-              render={({ field: { onChange, onBlur, value } }) => (
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    label="Email Address"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    onBlur={onBlur}
-                    onChangeText={onChange}
-                    value={value}
-                    mode="outlined"
-                    outlineColor={themeColors.border}
-                    activeOutlineColor={themeColors.primary}
-                    error={!!errors.email}
-                    left={<TextInput.Icon icon="email" />}
-                  />
-                  {errors.email && (
-                    <HelperText type="error" visible={true}>
-                      {errors.email.message}
-                    </HelperText>
-                  )}
-                </View>
-              )}
-            />
-
-            <PrimaryButton
-              onPress={handleSubmit(onSubmit)}
-              loading={loading}
-              style={styles.submitBtn}
-            >
-              RESET PASSWORD
-            </PrimaryButton>
-          </View>
-
-          <Snackbar
-            visible={!!successMsg || !!errorMsg}
-            onDismiss={handleSnackbarDismiss}
-            duration={4000}
-            action={{
-              label: 'OK',
-              onPress: handleSnackbarDismiss,
-            }}
-            style={successMsg ? styles.successSnackbar : styles.errorSnackbar}
-          >
-            {successMsg || errorMsg}
-          </Snackbar>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -139,39 +134,71 @@ const styles = StyleSheet.create({
   },
   scrollContainer: {
     flexGrow: 1,
-    padding: 24,
     justifyContent: 'center',
-  },
-  infoSection: {
-    marginBottom: 24,
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+  },
+  centerWrapper: {
+    width: '100%',
+    maxWidth: 450,
+    alignSelf: 'center',
+  },
+  formCard: {
+    backgroundColor: themeColors.surface,
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    borderRadius: 20,
+    borderWidth: Platform.OS === 'web' ? 1 : 0.5,
+    borderColor: themeColors.border,
+    elevation: 4,
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    alignItems: 'stretch',
+  },
+  iconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: themeColors.saffronLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  formTitle: {
+    fontWeight: '800',
+    color: themeColors.text,
+    textAlign: 'center',
+    marginBottom: 8,
   },
   infoText: {
     color: themeColors.textMuted,
     textAlign: 'center',
-    lineHeight: 22,
-  },
-  formSection: {
-    backgroundColor: themeColors.surface,
-    padding: 24,
-    borderRadius: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    lineHeight: 20,
+    marginBottom: 24,
+    paddingHorizontal: 8,
   },
   inputContainer: {
     marginBottom: 16,
   },
+  textInput: {
+    backgroundColor: themeColors.surface,
+  },
   submitBtn: {
     marginTop: 8,
+    width: '100%',
+    alignSelf: 'stretch',
   },
-  successSnackbar: {
-    backgroundColor: themeColors.success,
+  backBtn: {
+    marginTop: 12,
+    alignSelf: 'center',
   },
-  errorSnackbar: {
-    backgroundColor: themeColors.error,
+  backBtnLabel: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

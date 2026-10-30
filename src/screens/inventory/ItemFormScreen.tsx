@@ -10,9 +10,10 @@ import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { inventoryApi } from '../../api/services/inventoryApi';
 import { Item } from '../../types';
 
 type RoutePropType = RouteProp<RootStackParamList, 'ItemForm'>;
@@ -33,7 +34,6 @@ export const ItemFormScreen: React.FC = () => {
       name: '',
       price: '',
       description: '',
-      isAvailable: true,
     },
   });
 
@@ -43,13 +43,11 @@ export const ItemFormScreen: React.FC = () => {
       const fetchItem = async () => {
         setLoadingInitial(true);
         try {
-          const res = await apiClient.get(`/items/${editId}`);
-          const item: Item = res.data;
+          const item: Item = await inventoryApi.getItemById(editId);
           reset({
             name: item.itemName,
             price: item.currentPrice.toString(),
             description: item.description || '',
-            isAvailable: item.isAvailable,
           });
         } catch (err) {
           // Handle error loading
@@ -67,12 +65,10 @@ export const ItemFormScreen: React.FC = () => {
       const payload = {
         ...(editId ? { itemId: parseInt(editId, 10) } : {}),
         itemName: data.name,
-        currentPrice: parseFloat(data.price),
+        currentPrice: parseInt(data.price, 10) || 0,
         description: data.description,
-        isAvailable: data.isAvailable,
       };
-      const response = await apiClient.post('/items', payload);
-      return response.data;
+      return await inventoryApi.createItem(payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
@@ -85,7 +81,7 @@ export const ItemFormScreen: React.FC = () => {
 
   const onSubmit = (data: any) => {
     if (!isAdmin) {
-      alert('Only Admin users can add or edit inventory items.');
+      showGlobalToast({ message: 'Only Admin users can add or edit inventory items.', type: 'error' });
       return;
     }
     saveItemMutation.mutate(data);
@@ -136,16 +132,17 @@ export const ItemFormScreen: React.FC = () => {
               name="price"
               rules={{
                 required: 'Rental rate is required',
-                validate: (v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0 || 'Enter valid price rate',
+                pattern: { value: /^[0-9]+$/, message: 'Rental rate must be a whole number (in Rupees)' },
+                validate: (v) => (!isNaN(parseInt(v, 10)) && parseInt(v, 10) >= 0) || 'Enter a valid positive price rate',
               }}
               render={({ field: { onChange, onBlur, value } }) => (
                 <View style={styles.inputContainer}>
                   <TextInput
                     label="Rental Rate Price (₹ / day)"
-                    keyboardType="numeric"
+                    keyboardType="number-pad"
                     mode="outlined"
                     onBlur={onBlur}
-                    onChangeText={onChange}
+                    onChangeText={(val) => onChange(val.replace(/[^0-9]/g, ''))}
                     value={value}
                     outlineColor={themeColors.border}
                     activeOutlineColor={themeColors.primary}
@@ -161,21 +158,6 @@ export const ItemFormScreen: React.FC = () => {
                 </View>
               )}
             />
-
-             <View style={[styles.row, { alignItems: 'center', marginVertical: 12, justifyContent: 'space-between' }]}>
-               <Text style={{ color: themeColors.text, fontSize: 16 }}>Available for Booking</Text>
-               <Controller
-                 control={control}
-                 name="isAvailable"
-                 render={({ field: { value, onChange } }) => (
-                   <Switch
-                     value={value}
-                     onValueChange={onChange}
-                     trackColor={{ true: themeColors.primary }}
-                   />
-                 )}
-               />
-             </View>
 
             <Controller
               control={control}
@@ -198,24 +180,13 @@ export const ItemFormScreen: React.FC = () => {
               )}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={saveItemMutation.isPending || loadingInitial}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={saveItemMutation.isPending || loadingInitial}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                {editId ? 'UPDATE ITEM' : 'SAVE ITEM'}
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel={editId ? 'UPDATE ITEM' : 'SAVE ITEM'}
+              loading={saveItemMutation.isPending || loadingInitial}
+              disabled={saveItemMutation.isPending || loadingInitial}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

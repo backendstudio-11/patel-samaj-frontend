@@ -1,3 +1,14 @@
+export interface AuthResponse {
+  jwtToken: string;
+  refreshToken: string;
+  expireAt: string;
+}
+
+export interface AuthenticationDTO {
+  mobileNumber: string;
+  password: string;
+}
+
 export interface UserProfileDTO {
   fullName: string;
   mobileNumber: string;
@@ -39,7 +50,6 @@ export interface Item {
   itemName: string;
   currentPrice: number;
   description?: string;
-  isAvailable: boolean;
 }
 
 export interface EventItem {

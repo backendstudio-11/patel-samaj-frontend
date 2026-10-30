@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
-import { Text, Card, IconButton, Button } from 'react-native-paper';
+import { Text, Card, Button } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -13,7 +13,7 @@ import { AppHeader } from '../../components/AppHeader';
 import { ReusableCard } from '../../components/ReusableCard';
 import { RootStackParamList } from '../../navigation/types';
 import { eventApi } from '../../api/services/eventApi';
-import { formatCurrency, formatDate, ensureArray } from '../../utils/format';
+import { formatDate, ensureArray } from '../../utils/format';
 import { Event, PageResponse } from '../../types/index';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
@@ -24,10 +24,17 @@ export const DashboardScreen: React.FC = () => {
 
   const isAdmin = useSelector((state: RootState) => state.auth.isAdmin);
 
-  // Fetch live in-progress events
+  const today = new Date();
+  const [viewDate, setViewDate] = useState<Date>(new Date(today.getFullYear(), today.getMonth(), 1));
+
   const { data: rawEvents, refetch: refetchInProgress } = useQuery<PageResponse<Event>>({
     queryKey: ['events', 'in-progress'],
-    queryFn: () => eventApi.getInProgressEvents({ search: '', page: 0, size: 5 }) as Promise<PageResponse<Event>>,
+    queryFn: () => eventApi.getInProgressEvents({ search: '', page: 0, size: 50 }) as Promise<PageResponse<Event>>,
+  });
+
+  const { data: calendarCountsData, refetch: refetchCalendarCounts } = useQuery({
+    queryKey: ['events', 'calendar-counts'],
+    queryFn: () => eventApi.getCalendarCounts(),
   });
 
   const inProgressEvents: Event[] = ensureArray<Event>(rawEvents);
@@ -35,24 +42,16 @@ export const DashboardScreen: React.FC = () => {
   useFocusEffect(
     React.useCallback(() => {
       refetchInProgress();
-    }, [refetchInProgress])
+      refetchCalendarCounts();
+    }, [refetchInProgress, refetchCalendarCounts])
   );
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await refetchInProgress();
+    await Promise.all([refetchInProgress(), refetchCalendarCounts()]);
     setRefreshing(false);
   };
 
-  // Static numbers for dashboard overview to avoid simultaneous API calls
-  const totalDonorsCount = 24;
-  const pendingCount = 3;
-  const approvedCount = 7;
-  const inProgressCount = inProgressEvents.length || 3;
-  const activeCount = 10;
-  const totalExpenseSum = 45000;
-
-  // Quick Action Handler
   const handleQuickAction = (route: string) => {
     switch (route) {
       case 'DonorForm':
@@ -72,6 +71,70 @@ export const DashboardScreen: React.FC = () => {
     }
   };
 
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+
+  const handlePrevMonth = () => {
+    if (!isCurrentMonth) {
+      setViewDate(new Date(year, month - 1, 1));
+    }
+  };
+
+  const handleNextMonth = () => {
+    setViewDate(new Date(year, month + 1, 1));
+  };
+
+  const eventCountsByDate: { [dateStr: string]: number } = {};
+  inProgressEvents.forEach((evt) => {
+    if (!evt.startDate) return;
+    const startStr = new Date(evt.startDate).toISOString().split('T')[0];
+    const endStr = evt.endDate ? new Date(evt.endDate).toISOString().split('T')[0] : startStr;
+
+    let curr = new Date(startStr);
+    const end = new Date(endStr);
+    while (curr <= end) {
+      const key = curr.toISOString().split('T')[0];
+      eventCountsByDate[key] = (eventCountsByDate[key] || 0) + 1;
+      curr.setDate(curr.getDate() + 1);
+    }
+  });
+
+  const isDateBooked = (dateStr: string): boolean => {
+    if (!dateStr) return false;
+
+    if (calendarCountsData) {
+      if (Array.isArray(calendarCountsData)) {
+        if (calendarCountsData.includes(dateStr)) return true;
+      } else if (typeof calendarCountsData === 'object') {
+        const val = (calendarCountsData as any)[dateStr];
+        if (typeof val === 'number' && val > 0) return true;
+        if (typeof val === 'boolean' && val) return true;
+      }
+    }
+
+    return (eventCountsByDate[dateStr] || 0) > 0;
+  };
+
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const daysGrid: Array<{ day: number | null; dateStr: string | null; isToday: boolean; isPast: boolean }> = [];
+
+  for (let i = 0; i < firstDayOfWeek; i++) {
+    daysGrid.push({ day: null, dateStr: null, isToday: false, isPast: false });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dObj = new Date(year, month, d);
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const isTd = dObj.toDateString() === today.toDateString();
+    const isPst = dObj < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    daysGrid.push({ day: d, dateStr, isToday: isTd, isPast: isPst });
+  }
+
   return (
     <View style={styles.container}>
       <AppHeader
@@ -87,102 +150,77 @@ export const DashboardScreen: React.FC = () => {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[themeColors.primary]} />
         }
       >
-        {/* Financial Header Section */}
-        <View style={styles.financeHeader}>
-          <Text style={styles.financeLabel}>Total Outflow (Expenses)</Text>
-          <Text style={styles.financeAmount}>{formatCurrency(totalExpenseSum)}</Text>
-        </View>
-
-        {/* Stats Grid */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statsRow}>
-            <Card 
-              style={[styles.statCard, { borderTopColor: themeColors.primary, borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'DonorsTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="hand-heart" size={24} iconColor={themeColors.primary} />
-                <Text style={styles.statVal}>{totalDonorsCount}</Text>
-                <Text style={styles.statLabel}>Total Donors</Text>
-              </Card.Content>
-            </Card>
-
-            <Card 
-              style={[styles.statCard, { borderTopColor: '#3B82F6', borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'EventsTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="calendar-sync" size={24} iconColor="#3B82F6" />
-                <Text style={styles.statVal}>{activeCount}</Text>
-                <Text style={styles.statLabel}>Active Events</Text>
-              </Card.Content>
-            </Card>
-          </View>
-
-          <View style={styles.statsRow}>
-            <Card 
-              style={[styles.statCard, { borderTopColor: themeColors.warning, borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'EventsTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="clock-outline" size={24} iconColor={themeColors.warning} />
-                <Text style={styles.statVal}>{pendingCount}</Text>
-                <Text style={styles.statLabel}>Pending Events</Text>
-              </Card.Content>
-            </Card>
-
-            <Card 
-              style={[styles.statCard, { borderTopColor: themeColors.success, borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'EventsTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="check-circle-outline" size={24} iconColor={themeColors.success} />
-                <Text style={styles.statVal}>{approvedCount}</Text>
-                <Text style={styles.statLabel}>Approved Events</Text>
-              </Card.Content>
-            </Card>
-          </View>
-
-          <View style={styles.statsRow}>
-            <Card 
-              style={[styles.statCard, { borderTopColor: '#A855F7', borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'EventsTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="progress-wrench" size={24} iconColor="#A855F7" />
-                <Text style={styles.statVal}>{inProgressCount}</Text>
-                <Text style={styles.statLabel}>In Progress</Text>
-              </Card.Content>
-            </Card>
-
-            <Card 
-              style={[styles.statCard, { borderTopColor: themeColors.error, borderTopWidth: 4 }]}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'ExpensesTab' })}
-            >
-              <Card.Content style={styles.statContent}>
-                <IconButton icon="cash-remove" size={24} iconColor={themeColors.error} />
-                <Text style={styles.statVal}>{formatCurrency(totalExpenseSum)}</Text>
-                <Text style={styles.statLabel}>Total Expenses</Text>
-              </Card.Content>
-            </Card>
-          </View>
-        </View>
-
-        {/* Quick Actions Panel */}
-        <View style={styles.sectionHeader}>
-          <Text variant="titleMedium" style={styles.sectionTitle}>Quick Actions</Text>
-        </View>
-
-        <View style={styles.actionsGrid}>
-          <TouchableOpacity style={styles.actionItem} onPress={() => handleQuickAction('EventForm')}>
-            <View style={[styles.actionIconContainer, { backgroundColor: '#EFF6FF' }]}>
-              <MaterialCommunityIcons name="calendar-plus" size={24} color="#3B82F6" />
+        <Card style={styles.calendarCard}>
+          <Card.Content style={{ padding: 12 }}>
+            <View style={styles.calendarHeaderRow}>
+              <TouchableOpacity onPress={handlePrevMonth} disabled={isCurrentMonth} style={{ padding: 4 }}>
+                <MaterialCommunityIcons
+                  name="chevron-left"
+                  size={28}
+                  color={isCurrentMonth ? themeColors.border : themeColors.primary}
+                />
+              </TouchableOpacity>
+              <Text style={styles.monthTitleText}>{monthName}</Text>
+              <TouchableOpacity onPress={handleNextMonth} style={{ padding: 4 }}>
+                <MaterialCommunityIcons name="chevron-right" size={28} color={themeColors.primary} />
+              </TouchableOpacity>
             </View>
-            <Text style={styles.actionLabelText}>Add Event</Text>
-          </TouchableOpacity>
 
-          {isAdmin && (
-            <>
+            <View style={styles.weekdaysRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((wd) => (
+                <Text key={wd} style={styles.weekdayLabel}>{wd}</Text>
+              ))}
+            </View>
+
+            <View style={styles.daysGridContainer}>
+              {daysGrid.map((item, idx) => {
+                if (!item.day || !item.dateStr) {
+                  return <View key={`blank-${idx}`} style={styles.dayCell} />;
+                }
+
+                const isBooked = isDateBooked(item.dateStr);
+
+                return (
+                  <View
+                    key={item.dateStr}
+                    style={[
+                      styles.dayCell,
+                      isBooked && styles.bookedDayCell,
+                      item.isToday && styles.todayCell,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dayNumberText,
+                        isBooked && styles.bookedDayNumberText,
+                        item.isToday && styles.todayNumberText,
+                        item.isPast && !item.isToday && !isBooked && { color: themeColors.textMuted },
+                      ]}
+                    >
+                      {item.day}
+                    </Text>
+                    {isBooked && <View style={styles.bookedDot} />}
+                  </View>
+                );
+              })}
+            </View>
+          </Card.Content>
+        </Card>
+
+        {isAdmin && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text variant="titleMedium" style={styles.sectionTitle}>Quick Actions</Text>
+            </View>
+
+            <View style={styles.actionsGrid}>
+              <TouchableOpacity style={styles.actionItem} onPress={() => handleQuickAction('EventForm')}>
+                <View style={[styles.actionIconContainer, { backgroundColor: '#EFF6FF' }]}>
+                  <MaterialCommunityIcons name="calendar-plus" size={24} color="#3B82F6" />
+                </View>
+                <Text style={styles.actionLabelText}>Add Event</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.actionItem} onPress={() => handleQuickAction('DonorForm')}>
                 <View style={[styles.actionIconContainer, { backgroundColor: themeColors.saffronLight }]}>
                   <MaterialCommunityIcons name="hand-heart" size={24} color={themeColors.primary} />
@@ -203,11 +241,10 @@ export const DashboardScreen: React.FC = () => {
                 </View>
                 <Text style={styles.actionLabelText}>Add Item</Text>
               </TouchableOpacity>
-            </>
-          )}
-        </View>
+            </View>
+          </>
+        )}
 
-        {/* Recent In-Progress Events Section */}
         <View style={styles.sectionHeader}>
           <Text variant="titleMedium" style={styles.sectionTitle}>In-Progress Events</Text>
           <Button compact onPress={() => navigation.navigate('EventsTab' as any)}>View All</Button>
@@ -248,58 +285,81 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 32,
   },
-  financeHeader: {
-    backgroundColor: themeColors.secondary, // Dark Navy
-    padding: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    alignItems: 'center',
-    marginBottom: 20,
-    elevation: 4,
-  },
-  financeLabel: {
-    color: themeColors.saffronLight,
-    fontSize: 14,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  financeAmount: {
-    color: '#FFFFFF',
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginTop: 8,
-  },
-  statsGrid: {
-    paddingHorizontal: 12,
-    marginBottom: 16,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  statCard: {
-    flex: 1,
-    marginHorizontal: 6,
+  calendarCard: {
+    marginHorizontal: 12,
+    marginTop: 12,
+    marginBottom: 8,
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 16,
     ...shadows.soft,
   },
-  statContent: {
+  calendarHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 8,
+    marginBottom: 12,
+    paddingHorizontal: 8,
   },
-  statVal: {
-    fontSize: 20,
+  monthTitleText: {
+    fontSize: 17,
     fontWeight: 'bold',
-    color: themeColors.text,
-    marginTop: -4,
+    color: themeColors.secondary,
   },
-  statLabel: {
-    fontSize: 12,
-    color: themeColors.textMuted,
-    marginTop: 4,
+  weekdaysRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    borderBottomWidth: 1,
+    borderBottomColor: themeColors.border,
+    paddingBottom: 8,
+    marginBottom: 8,
+  },
+  weekdayLabel: {
+    flex: 1,
     textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '600',
+    color: themeColors.textMuted,
+  },
+  daysGridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: '14.28%',
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    marginVertical: 2,
+  },
+  todayCell: {
+    borderWidth: 1.5,
+    borderColor: themeColors.primary,
+  },
+  bookedDayCell: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: themeColors.primary,
+  },
+  dayNumberText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: themeColors.text,
+  },
+  todayNumberText: {
+    fontWeight: 'bold',
+    color: themeColors.primary,
+  },
+  bookedDayNumberText: {
+    fontWeight: 'bold',
+    color: themeColors.primary,
+  },
+  bookedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: themeColors.primary,
+    marginTop: 2,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -346,11 +406,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
     color: themeColors.text,
-  },
-  donorAmount: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: themeColors.success,
   },
   dateLabel: {
     fontSize: 12,

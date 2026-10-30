@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl } from 'react-native';
-import { Text, Card, Button, Badge, Banner, Snackbar } from 'react-native-paper';
+import { StyleSheet, View, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { Text, Card, Button, Badge, Banner } from 'react-native-paper';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -10,11 +10,13 @@ import { themeColors, shadows } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { ConfirmationDialog } from '../../components/ConfirmationDialog';
+import { showGlobalToast } from '../../context/ToastContext';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { eventApi } from '../../api/services/eventApi';
 import { formatCurrency, formatDate } from '../../utils/format';
+import { shareEventPdf, openWhatsAppDirectChat } from '../../utils/pdfShare';
 import { Event, EventStatus } from '../../types';
 
 type RoutePropType = RouteProp<RootStackParamList, 'EventDetails'>;
@@ -32,34 +34,38 @@ export const EventDetailsScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [statusDialogVisible, setStatusDialogVisible] = useState(false);
   const [pendingStatusId, setPendingStatusId] = useState<number | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { data: event, isLoading, isError, refetch } = useQuery<Event>({
     queryKey: ['event', id],
-    queryFn: async () => {
-      const res = await apiClient.get(`/events/${id}`);
-      return res.data;
-    },
+    queryFn: () => eventApi.getEventById(id),
   });
 
   // Close Event Mutation
   const closeEventMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiClient.put(`/events/close/${id}`);
-      return response.data;
-    },
-    onSuccess: () => {
+    mutationFn: () => eventApi.closeEvent(id),
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: ['event', id] });
       setCloseDialogVisible(false);
-      setSuccessMsg('Event closed successfully');
+      showGlobalToast({ message: 'Event closed successfully', type: 'success' });
     },
     onError: (err: any) => {
-      setErrorMsg(err.userMessage || 'Failed to close event');
+      showGlobalToast({ message: err.userMessage || 'Failed to close event', type: 'error' });
       setCloseDialogVisible(false);
     }
   });
+
+  const buildApprovalWhatsAppMessage = (evt: Event): string => {
+    const familyName = evt.familyHeadName || '';
+    const eventType = evt.eventType || '';
+    const startSlash = formatDate(evt.startDate).replace(/-/g, '/');
+    const endSlash = evt.endDate ? formatDate(evt.endDate).replace(/-/g, '/') : startSlash;
+    const dateStr = (evt.endDate && evt.endDate !== evt.startDate)
+      ? `${startSlash} થી ${endSlash}`
+      : startSlash;
+
+    return `જય શ્રી કૃષ્ણ ${familyName},\nલેઉવા પટેલ સમાજ તરફથી આપનું પ્રસંગ બુકિંગ મંજૂર કરવામાં આવ્યું છે.\nપ્રસંગ: ${eventType}\nતારીખ: ${dateStr}\nઆપના પ્રસંગ માટે ખૂબ ખૂબ શુભકામનાઓ!\n- લેઉવા પટેલ સમાજ - બીલડી`;
+  };
 
   // Status Change Mutation
   const updateStatusMutation = useMutation({
@@ -69,18 +75,49 @@ export const EventDetailsScreen: React.FC = () => {
         ...event,
         statusId: newStatusId,
       };
-      const response = await apiClient.put('/events', payload);
-      return response.data;
+      return await eventApi.updateEvent(payload);
     },
-    onSuccess: () => {
+    onSuccess: (_, newStatusId) => {
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: ['event', id] });
       setStatusDialogVisible(false);
-      setSuccessMsg('Status updated successfully');
+      showGlobalToast({ message: 'Status updated successfully', type: 'success' });
+
+      // Automatically open WhatsApp with Gujarati confirmation message when status changes to APPROVED
+      if (newStatusId === EventStatus.APPROVED && event && event.contactNumber) {
+        openWhatsAppDirectChat(event.contactNumber, buildApprovalWhatsAppMessage(event));
+      }
     },
     onError: (err: any) => {
-      setErrorMsg(err.userMessage || 'Failed to update status');
+      showGlobalToast({ message: err.userMessage || 'Failed to update status', type: 'error' });
       setStatusDialogVisible(false);
+    }
+  });
+
+  // Dedicated PDF Generation Mutation calling GET /api/events/{id}/pdf
+  const generatePdfMutation = useMutation({
+    mutationFn: () => eventApi.getEventPdf(id),
+    onSuccess: async (pdfData: ArrayBuffer) => {
+      if (pdfData && event) {
+        const result = await shareEventPdf({
+          pdfData,
+          eventId: id,
+          contactNumber: event.contactNumber,
+          familyHeadName: event.familyHeadName,
+          eventType: event.eventType,
+        });
+
+        if (result.downloadedToDevice) {
+          showGlobalToast({ message: result.message || 'Bill PDF downloaded to device successfully', type: 'success' });
+        } else {
+          showGlobalToast({ message: 'Bill PDF generated successfully', type: 'success' });
+        }
+      } else {
+        showGlobalToast({ message: 'PDF generated successfully', type: 'success' });
+      }
+    },
+    onError: (err: any) => {
+      showGlobalToast({ message: err.userMessage || 'Failed to generate PDF', type: 'error' });
     }
   });
 
@@ -213,7 +250,18 @@ export const EventDetailsScreen: React.FC = () => {
             </View>
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Contact Number</Text>
-              <Text style={styles.infoValue}>{event.contactNumber}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.infoValue}>{event.contactNumber}</Text>
+                {event.contactNumber && event.statusId === EventStatus.APPROVED ? (
+                  <TouchableOpacity
+                    onPress={() => openWhatsAppDirectChat(event.contactNumber, buildApprovalWhatsAppMessage(event))}
+                    style={{ marginLeft: 8 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MaterialCommunityIcons name="whatsapp" size={20} color="#25D366" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Email Address</Text>
@@ -284,6 +332,22 @@ export const EventDetailsScreen: React.FC = () => {
         </Card>
 
         {/* Actions */}
+        {isClosed && (
+          <View style={styles.actionContainer}>
+            <Button
+              mode="contained"
+              onPress={() => generatePdfMutation.mutate()}
+              buttonColor={themeColors.primary}
+              icon="file-pdf-box"
+              style={styles.actionBtn}
+              loading={generatePdfMutation.isPending}
+              disabled={generatePdfMutation.isPending}
+            >
+              GENERATE PDF
+            </Button>
+          </View>
+        )}
+
         {!isClosed && !isCancelled && (
           <View style={styles.actionContainer}>
             {event.statusId === EventStatus.PENDING && isAdmin && (
@@ -293,20 +357,20 @@ export const EventDetailsScreen: React.FC = () => {
                   onPress={() => confirmStatusChange(EventStatus.APPROVED)}
                   buttonColor={themeColors.success}
                   icon="check-circle-outline"
-                  style={{ paddingHorizontal: 16 }}
+                  compact={false}
                   disabled={updateStatusMutation.isPending || closeEventMutation.isPending}
                 >
-                  APPROVE EVENT
+                  APPROVE
                 </Button>
                 <Button
                   mode="contained"
                   onPress={() => confirmStatusChange(EventStatus.REJECTED)}
                   buttonColor={themeColors.error}
                   icon="close-circle-outline"
-                  style={{ paddingHorizontal: 16 }}
+                  compact={false}
                   disabled={updateStatusMutation.isPending || closeEventMutation.isPending}
                 >
-                  REJECT EVENT
+                  REJECT
                 </Button>
               </View>
             )}
@@ -331,7 +395,7 @@ export const EventDetailsScreen: React.FC = () => {
                 style={styles.actionBtn}
                 disabled={updateStatusMutation.isPending || closeEventMutation.isPending}
               >
-                CLOSE & LOCK EVENT
+                CLOSE & LOCK
               </Button>
             )}
             <Button
@@ -351,8 +415,8 @@ export const EventDetailsScreen: React.FC = () => {
       <ConfirmationDialog
         visible={closeDialogVisible}
         title="Close Event Billing"
-        message="Are you sure you want to close and lock this event booking? Once closed, items selection and billing totals will be locked permanently and cannot be modified."
-        confirmLabel="Close Event"
+        message={`Are you sure you want to close and lock this event booking? Once closed, billing totals will be locked permanently, the PDF invoice will be saved in cache, and opened for WhatsApp sharing${event?.contactNumber ? ` to ${event.contactNumber}` : ''}.`}
+        confirmLabel="Close & Share Bill"
         cancelLabel="Keep Open"
         onConfirm={handleCloseEvent}
         onCancel={() => setCloseDialogVisible(false)}
@@ -369,25 +433,6 @@ export const EventDetailsScreen: React.FC = () => {
         onCancel={() => setStatusDialogVisible(false)}
         loading={updateStatusMutation.isPending}
       />
-
-      <Snackbar
-        visible={!!successMsg}
-        onDismiss={() => setSuccessMsg(null)}
-        duration={3000}
-        style={{ backgroundColor: themeColors.success }}
-      >
-        {successMsg}
-      </Snackbar>
-
-      <Snackbar
-        visible={!!errorMsg}
-        onDismiss={() => setErrorMsg(null)}
-        duration={4000}
-        style={{ backgroundColor: themeColors.error }}
-        action={{ label: 'Close', onPress: () => setErrorMsg(null) }}
-      >
-        {errorMsg}
-      </Snackbar>
     </View>
   );
 };

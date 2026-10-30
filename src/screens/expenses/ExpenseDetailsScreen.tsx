@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, ScrollView } from 'react-native';
 import { Text, Card, Button } from 'react-native-paper';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,8 +11,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
+import { ConfirmationDialog } from '../../components/ConfirmationDialog';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { expenseApi } from '../../api/services/expenseApi';
 import { formatCurrency, formatFullDate } from '../../utils/format';
 import { Expense } from '../../types';
 
@@ -22,18 +24,36 @@ type NavigationProp = StackNavigationProp<RootStackParamList>;
 export const ExpenseDetailsScreen: React.FC = () => {
   const route = useRoute<RoutePropType>();
   const navigation = useNavigation<NavigationProp>();
+  const queryClient = useQueryClient();
   const { id } = route.params;
-  const [refreshing, setRefreshing] = React.useState(false);
 
   const isAdmin = useSelector((state: RootState) => state.auth.isAdmin);
+  const [deleteVisible, setDeleteVisible] = useState(false);
 
   const { data: expense, isLoading, isError } = useQuery<Expense>({
     queryKey: ['expense', id],
-    queryFn: async () => {
-      const res = await apiClient.get(`/expenses/${id}`);
-      return res.data;
+    queryFn: () => expenseApi.getExpenseById(id),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => expenseApi.deleteExpense(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      setDeleteVisible(false);
+      navigation.goBack();
+    },
+    onError: () => {
+      setDeleteVisible(false);
     },
   });
+
+  const handleDelete = () => {
+    if (!isAdmin) {
+      showGlobalToast({ message: 'Only Admin users can delete expense records.', type: 'error' });
+      return;
+    }
+    deleteMutation.mutate();
+  };
 
   if (isLoading) {
     return (
@@ -110,17 +130,40 @@ export const ExpenseDetailsScreen: React.FC = () => {
         </Card>
 
         {isAdmin && (
-          <Button
-            mode="contained"
-            onPress={() => navigation.navigate('ExpenseForm', { id: String(expense.expenseId) })}
-            buttonColor={themeColors.primary}
-            icon="pencil"
-            style={styles.editBtn}
-          >
-            Edit Expense details
-          </Button>
+          <View style={styles.btnRow}>
+            <Button
+              mode="contained"
+              onPress={() => navigation.navigate('ExpenseForm', { id: String(expense.expenseId) })}
+              buttonColor={themeColors.primary}
+              icon="pencil"
+              style={styles.btn}
+            >
+              Edit Expense
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={() => setDeleteVisible(true)}
+              textColor={themeColors.error}
+              icon="delete"
+              style={[styles.btn, { borderColor: themeColors.error }]}
+            >
+              Delete Expense
+            </Button>
+          </View>
         )}
       </ScrollView>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={deleteVisible}
+        title="Delete Expense"
+        message={`Are you sure you want to delete this expense of ${formatCurrency(expense.amount)}? This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteVisible(false)}
+        loading={deleteMutation.isPending}
+      />
     </View>
   );
 };
@@ -194,14 +237,21 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: themeColors.border,
   },
-  editBtn: {
+  btnRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 16,
+  },
+  btn: {
     borderRadius: 8,
     height: 48,
     justifyContent: 'center',
     alignSelf: 'center',
-    marginTop: 16,
-    paddingHorizontal: 24,
-    minWidth: 180,
+    paddingHorizontal: 16,
+    minWidth: 130,
+    flex: 1,
   },
   errorContainer: {
     flex: 1,

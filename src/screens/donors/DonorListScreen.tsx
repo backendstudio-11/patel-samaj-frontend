@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, FlatList, RefreshControl } from 'react-native';
-import { Text, FAB } from 'react-native-paper';
+import { Text, FAB, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 
@@ -14,6 +14,7 @@ import { ReusableCard } from '../../components/ReusableCard';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { EmptyState } from '../../components/EmptyState';
 import { PaginationControl } from '../../components/PaginationControl';
+import { ConfirmationDialog } from '../../components/ConfirmationDialog';
 import { RootStackParamList } from '../../navigation/types';
 import { donorApi } from '../../api/services/donorApi';
 import { formatCurrency, formatDate } from '../../utils/format';
@@ -24,11 +25,13 @@ type NavigationProp = StackNavigationProp<RootStackParamList>;
 
 export const DonorListScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 500);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(5);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const isAdmin = useSelector((state: RootState) => state.auth.isAdmin);
 
@@ -36,6 +39,17 @@ export const DonorListScreen: React.FC = () => {
   const { data: pageData, isLoading, refetch } = useQuery<PageResponse<Donor>>({
     queryKey: ['donors', debouncedSearch, page, pageSize],
     queryFn: () => donorApi.getDonors({ search: debouncedSearch, page, size: pageSize }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => donorApi.deleteDonor(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['donors'] });
+      setDeleteId(null);
+    },
+    onError: () => {
+      setDeleteId(null);
+    },
   });
 
   const donors = pageData?.content || [];
@@ -51,6 +65,12 @@ export const DonorListScreen: React.FC = () => {
     setRefreshing(true);
     await refetch();
     setRefreshing(false);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deleteId && isAdmin) {
+      deleteMutation.mutate(deleteId);
+    }
   };
 
   return (
@@ -99,6 +119,23 @@ export const DonorListScreen: React.FC = () => {
                   </Text>
                 ) : null}
               </View>
+
+              {isAdmin && (
+                <View style={styles.cardActions}>
+                  <IconButton
+                    icon="pencil-outline"
+                    size={20}
+                    iconColor={themeColors.secondary}
+                    onPress={() => navigation.navigate('DonorForm', { id: String(item.donorId) })}
+                  />
+                  <IconButton
+                    icon="delete-outline"
+                    size={20}
+                    iconColor={themeColors.error}
+                    onPress={() => setDeleteId(String(item.donorId))}
+                  />
+                </View>
+              )}
             </ReusableCard>
           )}
           ListFooterComponent={
@@ -137,6 +174,18 @@ export const DonorListScreen: React.FC = () => {
           onPress={() => navigation.navigate('DonorForm')}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={!!deleteId}
+        title="Delete Donor"
+        message="Are you sure you want to delete this donor record? This action cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteId(null)}
+        loading={deleteMutation.isPending}
+      />
     </View>
   );
 };
@@ -182,6 +231,12 @@ const styles = StyleSheet.create({
     color: themeColors.textMuted,
     fontStyle: 'italic',
     marginTop: 4,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    marginRight: -8,
   },
   fab: {
     position: 'absolute',

@@ -13,9 +13,11 @@ import { AppHeader } from '../../components/AppHeader';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { ConfirmationDialog } from '../../components/ConfirmationDialog';
 import { logoutAction } from '../../store/authSlice';
+import { clearStoredToken } from '../../utils/tokenManager';
 import { RootState } from '../../store';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
+import { userApi } from '../../api/services/userApi';
+import { authApi, performLogout } from '../../api/services/authApi';
 import { User, UserProfileDTO } from '../../types';
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
@@ -33,13 +35,12 @@ export const ProfileScreen: React.FC = () => {
     queryKey: ['user-profile'],
     queryFn: async () => {
       try {
-        const res = await apiClient.get('/user');
-        const data = res.data;
+        const data = await userApi.getUserProfile();
         if (!data) return { fullName: storeUser?.fullName || 'Administrator', mobileNumber: storeUser?.mobileNumber || '', email: storeUser?.email || '' };
         return {
           fullName: data.fullName || storeUser?.fullName || 'Administrator',
-          mobileNumber: data.mobileNumber || data.mobile || data.phone || storeUser?.mobileNumber || '',
-          email: data.email || data.emailAddress || storeUser?.email || '',
+          mobileNumber: (data as any).mobileNumber || (data as any).mobile || (data as any).phone || storeUser?.mobileNumber || '',
+          email: data.email || (data as any).emailAddress || storeUser?.email || '',
         };
       } catch {
         return {
@@ -54,25 +55,15 @@ export const ProfileScreen: React.FC = () => {
   const handleLogout = async () => {
     setLogoutLoading(true);
     try {
-      // POST logout to backend
-      await apiClient.post('/auth/logout');
-    } catch (err) {
-      // Suppress network failure, clear auth local session anyway
+      await performLogout(dispatch);
     } finally {
-      // Remove Token from storage
-      await AsyncStorage.removeItem('jwt_token');
-
-      // Clear Redux state
-      dispatch(logoutAction());
-
       setLogoutLoading(false);
       setLogoutVisible(false);
     }
   };
 
   const goToAdminLogin = async () => {
-    await AsyncStorage.removeItem('jwt_token');
-    dispatch(logoutAction());
+    await performLogout(dispatch);
     navigation.reset({
       index: 0,
       routes: [{ name: 'Login' as any }],
@@ -203,7 +194,8 @@ export const ProfileScreen: React.FC = () => {
         title="Confirm Logout"
         message="Are you sure you want to log out from the Leuva Patel Samaj Admin Management System?"
         confirmLabel="Logout"
-        cancelLabel="Stay logged in"
+        cancelLabel="Cancel"
+        icon="logout"
         onConfirm={handleLogout}
         onCancel={() => setLogoutVisible(false)}
         loading={logoutLoading}

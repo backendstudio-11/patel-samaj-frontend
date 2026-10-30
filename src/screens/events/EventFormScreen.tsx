@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { StyleSheet, View, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { Text, TextInput, HelperText, Card, Button, IconButton } from 'react-native-paper';
 import { useForm, Controller } from 'react-hook-form';
@@ -7,12 +7,12 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { themeColors } from '../../theme';
 import { AppHeader } from '../../components/AppHeader';
-import { PrimaryButton } from '../../components/PrimaryButton';
 import { DatePicker } from '../../components/DatePicker';
 import { BottomSheet } from '../../components/BottomSheet';
 import { ConfirmationDialog } from '../../components/ConfirmationDialog';
+import { FormActionButtons } from '../../components/FormActionButtons';
+import { showGlobalToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../navigation/types';
-import apiClient from '../../api/client';
 import { inventoryApi } from '../../api/services/inventoryApi';
 import { eventApi } from '../../api/services/eventApi';
 import { formatCurrency } from '../../utils/format';
@@ -47,7 +47,14 @@ export const EventFormScreen: React.FC = () => {
     queryFn: () => inventoryApi.getItems(),
   });
 
-  const { control, handleSubmit, setValue, reset, formState: { errors } } = useForm({
+  // Current Date (Today) used as default and minimum date to disable past dates
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const { control, handleSubmit, setValue, reset, getValues, watch, formState: { errors } } = useForm({
     defaultValues: {
       familyHeadName: '',
       contactNumber: '',
@@ -59,6 +66,8 @@ export const EventFormScreen: React.FC = () => {
       paidAmount: '0',
     },
   });
+
+  const watchedStartDate = watch('startDate');
 
   // Calculate live total amount
   const liveTotalAmount = selectedItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
@@ -82,7 +91,7 @@ export const EventFormScreen: React.FC = () => {
             startDate: stDate,
             endDate: enDate,
             remarks: event.remarks || '',
-            paidAmount: event.paidAmount?.toString() || '0',
+            paidAmount: (event.paidAmount || 0).toString(),
           });
 
           setOriginalStatusId(event.statusId);
@@ -118,7 +127,7 @@ export const EventFormScreen: React.FC = () => {
         startDate: formData.startDate.toISOString(),
         endDate: formData.endDate ? formData.endDate.toISOString() : null,
         remarks: formData.remarks,
-        paidAmount: parseFloat(formData.paidAmount || '0'),
+        paidAmount: parseInt(formData.paidAmount || '0', 10) || 0,
         totalAmount: liveTotalAmount,
         items: selectedItems.map((item) => ({
           itemId: item.itemId,
@@ -153,9 +162,11 @@ export const EventFormScreen: React.FC = () => {
       if (!editId) return;
       return await eventApi.closeEvent(editId);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['events'] });
-      queryClient.invalidateQueries({ queryKey: ['event', editId] });
+      if (editId) {
+        queryClient.invalidateQueries({ queryKey: ['event', editId] });
+      }
       setCloseDialogVisible(false);
       navigation.goBack();
     },
@@ -178,6 +189,28 @@ export const EventFormScreen: React.FC = () => {
   });
 
   const onSubmit = (data: any) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const startStr = new Date(data.startDate).toISOString().split('T')[0];
+
+    // User cannot select past date before today
+    if (!editId && startStr < todayStr) {
+      showGlobalToast({
+        message: 'Event start date cannot be in the past.',
+        type: 'error',
+      });
+      return;
+    }
+
+    const endStr = new Date(data.endDate || data.startDate).toISOString().split('T')[0];
+
+    if (endStr < startStr) {
+      showGlobalToast({
+        message: 'End date must be greater than or equal to start date.',
+        type: 'error',
+      });
+      return;
+    }
+
     saveEventMutation.mutate(data);
   };
 
@@ -382,9 +415,13 @@ export const EventFormScreen: React.FC = () => {
               render={({ field: { onChange, value } }) => (
                 <DatePicker
                   date={value}
+                  minimumDate={value ? new Date(value) : today}
                   onChange={(selectedDate: Date) => {
                     onChange(selectedDate);
-                    setValue('endDate', selectedDate);
+                    const currentEnd = getValues('endDate');
+                    if (!currentEnd || new Date(currentEnd) < selectedDate) {
+                      setValue('endDate', selectedDate);
+                    }
                   }}
                   label="Start Date"
                 />
@@ -396,7 +433,8 @@ export const EventFormScreen: React.FC = () => {
               name="endDate"
               render={({ field: { onChange, value } }) => (
                 <DatePicker
-                  date={value || new Date()}
+                  date={value || watchedStartDate || today}
+                  minimumDate={watchedStartDate ? new Date(watchedStartDate) : (value ? new Date(value) : today)}
                   onChange={onChange}
                   label="End Date"
                 />
@@ -422,7 +460,7 @@ export const EventFormScreen: React.FC = () => {
               <View key={item.itemId} style={styles.selectedItemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemNameText}>{item.name}</Text>
-                  <Text style={styles.itemPriceText}>₹{item.price.toFixed(2)} / unit</Text>
+                  <Text style={styles.itemPriceText}>₹{Math.round(item.price)} / unit</Text>
                 </View>
                 <View style={styles.qtyContainer}>
                   <IconButton
@@ -492,24 +530,13 @@ export const EventFormScreen: React.FC = () => {
               )}
             />
 
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 16 }}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                textColor={themeColors.textMuted}
-                style={{ borderRadius: 8, height: 48, justifyContent: 'center', borderColor: themeColors.border, paddingHorizontal: 16, minWidth: 120 }}
-                disabled={saveEventMutation.isPending || loadingInitial}
-              >
-                CANCEL
-              </Button>
-              <PrimaryButton
-                onPress={handleSubmit(onSubmit)}
-                loading={saveEventMutation.isPending || loadingInitial}
-                style={{ marginVertical: 0, minWidth: 140 }}
-              >
-                {editId ? 'UPDATE BOOKING' : 'CREATE BOOKING'}
-              </PrimaryButton>
-            </View>
+            <FormActionButtons
+              onSubmit={handleSubmit(onSubmit)}
+              onCancel={() => navigation.goBack()}
+              submitLabel={editId ? 'UPDATE BOOKING' : 'CREATE BOOKING'}
+              loading={saveEventMutation.isPending || loadingInitial}
+              disabled={saveEventMutation.isPending || loadingInitial}
+            />
 
           </View>
         </ScrollView>
@@ -529,8 +556,8 @@ export const EventFormScreen: React.FC = () => {
       <ConfirmationDialog
         visible={closeDialogVisible}
         title="Close Event Billing"
-        message="Are you sure you want to close and lock this event booking? Once closed, items selection and billing totals will be locked permanently and cannot be modified."
-        confirmLabel="Close Event"
+        message="Are you sure you want to close and lock this event booking? Once closed, billing totals will be locked permanently, the PDF invoice will be saved in cache, and opened for WhatsApp sharing."
+        confirmLabel="Close & Share Bill"
         cancelLabel="Keep Open"
         onConfirm={() => closeEventMutation.mutate()}
         onCancel={() => setCloseDialogVisible(false)}

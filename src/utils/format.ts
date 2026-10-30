@@ -37,19 +37,16 @@ export const formatFullDate = (isoString: string): string => {
   }
 };
 
-/**
- * Formats a number to Indian Rupee (INR) format (e.g. ₹5,000.00)
- */
 export const formatCurrency = (amount: number): string => {
-  if (amount === undefined || amount === null) return '₹0.00';
+  if (amount === undefined || amount === null || isNaN(amount)) return '₹0';
   try {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 0,
     }).format(amount);
   } catch (error) {
-    return `₹${amount.toFixed(2)}`;
+    return `₹${amount.toLocaleString('en-IN')}`;
   }
 };
 

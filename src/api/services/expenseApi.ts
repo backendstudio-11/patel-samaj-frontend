@@ -26,4 +26,9 @@ export const expenseApi = {
     const res = await apiClient.get<DailyExpenseSummary[]>('/expenses/daily-summary');
     return res.data;
   },
+
+  deleteExpense: async (id: string | number): Promise<any> => {
+    const res = await apiClient.delete(`/expenses/${id}`);
+    return res.data;
+  },
 };
