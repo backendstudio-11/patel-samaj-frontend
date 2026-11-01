@@ -345,8 +345,7 @@ apiClient.interceptors.response.use(
         const newJwtToken = refreshData.jwtToken;
         const newRefreshToken = refreshData.refreshToken;
         const newExpireAt = refreshData.expireAt;
-        const expiresAtMs =
-          parseExpiryToMs(newExpireAt) ?? calculateTokenExpiry(newJwtToken);
+        const expiresAtMs = calculateTokenExpiry(newJwtToken, newExpireAt);
 
         await setStoredTokens(newJwtToken, newRefreshToken);
         store.dispatch(

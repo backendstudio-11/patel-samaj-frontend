@@ -77,8 +77,7 @@ export const LoginScreen: React.FC = () => {
         throw new Error('Authentication failed: JWT Token is missing in server response.');
       }
 
-      const expiresAtMs =
-        parseExpiryToMs(expireAt) ?? calculateTokenExpiry(token);
+      const expiresAtMs = calculateTokenExpiry(token, expireAt);
 
       // Store JWT Token & Refresh Token in AsyncStorage
       await setStoredTokens(token, refreshToken);

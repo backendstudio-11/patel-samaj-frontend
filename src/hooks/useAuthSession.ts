@@ -24,22 +24,29 @@ export const useAuthSession = () => {
   );
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const isRefreshingRef = useRef<boolean>(false);
+  const lastRefreshAttemptRef = useRef<number>(0);
 
   const checkAndHandleExpiry = async () => {
     if (!isAuthenticated || !token) {
       return;
     }
 
+    // Cooldown guard: Never attempt refresh more than once every 10 seconds
+    const now = Date.now();
+    if (now - lastRefreshAttemptRef.current < 10000) {
+      return;
+    }
+
     if (isTokenExpired(token, expiresAt) && !isRefreshingRef.current) {
       isRefreshingRef.current = true;
+      lastRefreshAttemptRef.current = Date.now();
       try {
         const refreshResponse = await authApi.refreshToken(refreshToken);
         if (refreshResponse?.jwtToken) {
           const newJwtToken = refreshResponse.jwtToken;
           const newRefreshToken = refreshResponse.refreshToken;
           const newExpireAt = refreshResponse.expireAt;
-          const expiresAtMs =
-            parseExpiryToMs(newExpireAt) ?? calculateTokenExpiry(newJwtToken);
+          const expiresAtMs = calculateTokenExpiry(newJwtToken, newExpireAt);
 
           await setStoredTokens(newJwtToken, newRefreshToken);
           dispatch(
@@ -60,7 +67,7 @@ export const useAuthSession = () => {
   };
 
   useEffect(() => {
-    // 1. Immediate check on mount / state change
+    // 1. Check on mount / state change
     checkAndHandleExpiry();
 
     if (!isAuthenticated || !token) {
@@ -89,15 +96,13 @@ export const useAuthSession = () => {
         timerId = setTimeout(() => {
           checkAndHandleExpiry();
         }, msUntilExpiry);
-      } else {
-        checkAndHandleExpiry();
       }
     }
 
-    // 4. Periodic background sanity interval check (every 30 seconds)
+    // 4. Periodic background sanity interval check (every 60 seconds)
     const intervalId = setInterval(() => {
       checkAndHandleExpiry();
-    }, 30 * 1000);
+    }, 60 * 1000);
 
     return () => {
       subscription.remove();

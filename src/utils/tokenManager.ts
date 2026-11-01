@@ -10,7 +10,17 @@ export const parseExpiryToMs = (expireAt?: string | number | null): number | nul
     return expireAt < 10000000000 ? expireAt * 1000 : expireAt;
   }
   if (typeof expireAt === 'string') {
-    const parsed = Date.parse(expireAt);
+    let dateStr = expireAt.trim();
+    // If backend sent naive LocalDateTime like "2026-11-01T06:17:00", treat it as UTC
+    if (
+      dateStr.includes('T') &&
+      !dateStr.endsWith('Z') &&
+      !dateStr.includes('+') &&
+      !dateStr.slice(10).includes('-')
+    ) {
+      dateStr = dateStr + 'Z';
+    }
+    const parsed = Date.parse(dateStr);
     if (!isNaN(parsed)) {
       return parsed;
     }
@@ -67,14 +77,9 @@ export const calculateTokenExpiry = (
   expireAt?: string | number | null,
   durationMs: number = TOKEN_EXPIRY_DURATION_MS
 ): number => {
-  const fromExpireAt = parseExpiryToMs(expireAt);
-  if (fromExpireAt && fromExpireAt > Date.now()) {
-    return fromExpireAt;
-  }
-
   const now = Date.now();
-  const defaultExpiry = now + durationMs;
 
+  // 1. Authoritative: Use embedded JWT exp claim (UTC epoch seconds)
   if (token) {
     const payload = parseJwtPayload(token);
     if (payload && typeof payload.exp === 'number') {
@@ -85,7 +90,13 @@ export const calculateTokenExpiry = (
     }
   }
 
-  return defaultExpiry;
+  // 2. Fallback to expireAt from backend response if in the future
+  const fromExpireAt = parseExpiryToMs(expireAt);
+  if (fromExpireAt && fromExpireAt > now) {
+    return fromExpireAt;
+  }
+
+  return now + durationMs;
 };
 
 export const isTokenExpired = (
@@ -97,18 +108,16 @@ export const isTokenExpired = (
 
   const now = Date.now();
 
-  // Check against recorded expiration timestamp
-  if (expiresAt && now + bufferMs >= expiresAt) {
-    return true;
-  }
-
-  // Check against embedded JWT exp claim if present
+  // Check against embedded JWT exp claim if present (authoritative UTC)
   const payload = parseJwtPayload(token);
   if (payload && typeof payload.exp === 'number') {
     const jwtExpMs = payload.exp * 1000;
-    if (now + bufferMs >= jwtExpMs) {
-      return true;
-    }
+    return now + bufferMs >= jwtExpMs;
+  }
+
+  // Otherwise check against recorded expiration timestamp
+  if (expiresAt && now + bufferMs >= expiresAt) {
+    return true;
   }
 
   return false;
